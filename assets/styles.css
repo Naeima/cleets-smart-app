@@ -1,0 +1,4 @@
+.header{display:flex;align-items:center;justify-content:center;gap:16px;padding:24px;}
+.card-container{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:24px;}
+.card{border:1px solid #ddd;border-radius:12px;padding:18px;text-decoration:none;color:inherit;background:white;}
+.card:hover{box-shadow:0 6px 18px rgba(0,0,0,0.12);}
