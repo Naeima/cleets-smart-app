@@ -361,38 +361,140 @@ def build_daily_uk_mean_chart(selected_decades: Optional[list[str]] = None) -> g
 
     return fig
 
-def _annual_mean_temp_series_for_file(path: str) -> pd.Series:
-    ds = xr.open_dataset(path, engine="netcdf4")
-    tas = _tas_to_celsius(ds["tas"]).mean(
-        dim=["projection_x_coordinate", "projection_y_coordinate", "ensemble_member"],
-        skipna=True,
-    )
-    annual = tas.groupby("time.year").mean("time").to_series()
-    annual = annual[~annual.index.duplicated()].sort_index()
-    return annual
 
-@lru_cache(maxsize=8)
+
+
+# ---------------- Improved annual temperature + anomaly pipeline (monthly stitching) ----------------
+# Rationale:
+#   Decadal NetCDF files may split a calendar year across two files (e.g., one file contains only December,
+#   the next contains Jan–Nov). If you QC "12 months per year" *within each file*, you can incorrectly drop
+#   legitimate years (e.g., 2020). The fix is:
+#     1) build a continuous UK-mean *monthly* series across all files,
+#     2) resolve overlapping year-months across files (median),
+#     3) aggregate to annual means, keeping only years with 12 months.
+
+def _ym_from_time_values(time_values) -> tuple[np.ndarray, np.ndarray]:
+    """Return (year, month) int arrays from CFTime or datetime-like objects."""
+    years: list[int] = []
+    months: list[int] = []
+    for t in time_values:
+        years.append(int(getattr(t, "year")))
+        months.append(int(getattr(t, "month")))
+    return np.asarray(years, dtype=int), np.asarray(months, dtype=int)
+
+
+def _monthly_series_for_file(path: str) -> pd.Series:
+    """Monthly UK-mean tas (°C) as a Series indexed by (year, month)."""
+    ds = xr.open_dataset(path, engine="netcdf4")
+    tas = _tas_to_celsius(ds["tas"])
+
+    if "time" not in tas.dims:
+        raise ValueError(f"'time' dimension not found in tas: dims={tas.dims}")
+
+    spatial_dims = [d for d in tas.dims if d != "time"]
+    ts = tas.mean(dim=spatial_dims, skipna=True)  # UK mean per timestep
+
+    # Build (year, month) for each timestep, then average within each month
+    years, months = _ym_from_time_values(ts["time"].values)
+    df = pd.DataFrame({
+        "year": years,
+        "month": months,
+        "tas": np.asarray(ts.values, dtype=float),
+    })
+    df = df[np.isfinite(df["tas"].to_numpy())].copy()
+
+    monthly = df.groupby(["year", "month"])["tas"].mean()
+    monthly.index = pd.MultiIndex.from_tuples(
+        [(int(y), int(m)) for (y, m) in monthly.index], names=["year", "month"]
+    )
+    monthly.name = "tas_monthly_uk"
+    return monthly.sort_index()
+
+
+@lru_cache(maxsize=2)
+def _continuous_monthly_series() -> pd.Series:
+    """Continuous monthly UK series across all HEAT_FILES; overlaps merged by median."""
+    parts = []
+    for p in HEAT_FILES.values():
+        parts.append(_monthly_series_for_file(p))
+
+    combined = pd.concat(parts)
+    # median across duplicated (year,month) from overlapping files
+    merged = combined.groupby(level=[0, 1]).median()
+    merged.name = "tas_monthly_uk"
+    return merged.sort_index()
+
+
+@lru_cache(maxsize=2)
+def _continuous_annual_series() -> pd.Series:
+    """Annual means from the continuous monthly series; keep only years with 12 months."""
+    m = _continuous_monthly_series()
+
+    # count months per year (after merging overlaps)
+    month_counts = m.groupby(level=0).size()
+
+    # annual mean from months (each month weighted equally here; consistent with 360-day monthly means)
+    annual = m.groupby(level=0).mean()
+
+    keep_years = month_counts[month_counts >= 12].index.astype(int)
+    annual = annual.loc[keep_years]
+    annual.index = annual.index.astype(int)
+    annual.name = "tas_annual_uk"
+    return annual.sort_index()
+
+
+@lru_cache(maxsize=2)
 def _baseline_temp_1990_2000() -> float:
-    temps = []
-    for _, p in HEAT_FILES.items():
-        temps.append(_annual_mean_temp_series_for_file(p))
-    combined = pd.concat(temps)
-    combined = combined[~combined.index.duplicated()].sort_index()
-    base = combined.loc[1990:2000]
-    return float(base.mean()) if not base.empty else float(combined.mean())
+    s = _continuous_annual_series()
+    base = s.loc[1990:2000]
+    return float(base.mean())
+
+
+@lru_cache(maxsize=2)
+def _continuous_anomaly_series() -> pd.Series:
+    s = _continuous_annual_series()
+    baseline = _baseline_temp_1990_2000()
+    out = s - baseline
+    out.name = "anom_annual_uk"
+    return out
+
 
 @lru_cache(maxsize=64)
 def decade_anomaly_series(decade_label: str) -> pd.Series:
-    baseline_temp = _baseline_temp_1990_2000()
-    annual = _annual_mean_temp_series_for_file(HEAT_FILES[decade_label])
-    anom = annual - baseline_temp
-    anom.name = decade_label
-    return anom
+    """Decade slice of the cleaned continuous anomaly series."""
+    anom = _continuous_anomaly_series()
+    m = re.search(r"(\d{4}).*?(\d{4})", decade_label)
+    if not m:
+        raise ValueError(f"Could not parse years from label: {decade_label}")
+    y0, y1 = int(m.group(1)), int(m.group(2))
+    s = anom.loc[y0:y1].copy()
+    s.name = decade_label
+    return s
+
+# --------------------------------------------------------------------------------
+
+
+
 
 def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] = None) -> go.Figure:
     selected_decades = selected_decades or list(HEAT_FILES.keys())
     fig = go.Figure()
 
+    # Continuous anomaly series built from monthly stitching across files (years require 12 months)
+    anom = _continuous_anomaly_series()
+
+    fig.add_trace(
+        go.Scatter(
+            x=anom.index.astype(int),
+            y=anom.values,
+            mode="lines+markers",
+            name="Annual anomaly (continuous)",
+            line=dict(width=3),
+            hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
+        )
+    )
+
+    # Optional per-decade overlays (hidden by default)
     for lab in HEAT_FILES.keys():
         if lab not in selected_decades:
             continue
@@ -403,6 +505,7 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
                 y=s.values,
                 mode="lines+markers",
                 name=lab,
+                visible="legendonly",
                 line=dict(color=HEAT_TS_COLORS.get(lab)) if HEAT_TS_COLORS.get(lab) else None,
                 hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
             )
@@ -412,10 +515,10 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
         template="plotly_white",
         margin=dict(l=50, r=40, t=70, b=55),
         title=(
-            "Annual mean temperature anomaly — decades as separate series (baseline 1990–2000)<br>"
+            "Annual mean temperature anomaly — continuous series (baseline 1990–2000)<br>"
             "<sup>"
-            "Source: DAFNI NetCDF layers (downloaded via Google Drive). "
-            "Method: UK-mean tas → annual mean per year → anomaly relative to the 1990–2000 mean."
+            "Method: UK-mean tas → monthly means per (year,month) → stitch across decadal files (median for overlaps) "
+            "→ annual means (years with 12 months only) → anomaly relative to 1990–2000."
             "</sup>"
         ),
         yaxis_title="Temperature anomaly (°C)",
@@ -425,33 +528,40 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
     fig.update_xaxes(type="linear", tickmode="auto")
     return fig
 
+
+
 def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> go.Figure:
     """
-    Mean temperature anomaly across selected decade-series, with Paris thresholds.
+    Annual anomaly series with Paris thresholds.
+    Built from monthly stitching across files; annual values require 12 months.
+    If selected_decades is provided, restrict to the union of those decade ranges.
     """
     selected_decades = selected_decades or list(HEAT_FILES.keys())
 
-    parts = []
+    anom = _continuous_anomaly_series()
+
+    years_keep: set[int] = set()
     for lab in HEAT_FILES.keys():
         if lab not in selected_decades:
             continue
-        s = decade_anomaly_series(lab)
-        parts.append(s.rename(lab))
+        m = re.search(r"(\d{4}).*?(\d{4})", lab)
+        if not m:
+            continue
+        y0, y1 = int(m.group(1)), int(m.group(2))
+        years_keep.update(range(y0, y1 + 1))
 
-    if parts:
-        combined = pd.concat(parts, axis=1).sort_index()
-        mean_anom = combined.mean(axis=1)
-    else:
-        mean_anom = pd.Series(dtype=float)
+    if years_keep:
+        idx = [int(y) for y in anom.index.astype(int) if int(y) in years_keep]
+        anom = anom.loc[idx]
 
     fig = go.Figure()
 
     fig.add_trace(
         go.Scatter(
-            x=mean_anom.index.astype(int),
-            y=mean_anom.values,
+            x=anom.index.astype(int),
+            y=anom.values,
             mode="lines+markers",
-            name="Mean temperature anomaly",
+            name="Annual anomaly (continuous)",
             line=dict(width=3),
             hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
         )
@@ -474,8 +584,8 @@ def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> g
         title=(
             "Rise in Average Temperature Relative to Paris Agreement Targets<br>"
             "<sup>"
-            "Source: DAFNI NetCDF layers (downloaded via Google Drive). "
-            "Method: annual anomalies (baseline 1990–2000) averaged across selected decade-series."
+            "Method: monthly stitching across decadal files; annual values require 12 months; "
+            "anomalies relative to 1990–2000."
             "</sup>"
         ),
         xaxis_title="Year",
