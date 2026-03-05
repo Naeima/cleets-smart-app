@@ -2,8 +2,7 @@
 # CLEETS-SMART Dashboard B: Thrust One (BEV + WIMD + Charging)
 # ============================================================
 # Dash page that renders the Folium map from thrust_one.py in an iframe,
-# with MANUAL refresh only (button click), and NO fallback-to-default map
-# if an update errors (keeps the last good map on screen).
+# with controls similar to the Weather Forecaster dashboard.
 # ============================================================
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ import folium
 from folium.plugins import HeatMap, MarkerCluster
 from branca.element import Template, MacroElement
 
-from dash import html, dcc, Input, Output, State, callback, register_page, no_update
+from dash import html, dcc, Input, Output, State, callback, register_page
 
 warnings.filterwarnings("ignore")
 
@@ -30,6 +29,7 @@ warnings.filterwarnings("ignore")
 # Data sources
 # ---------------------------
 DATA_SOURCE = "https://drive.google.com/uc?id=1GMjkMXOI-wwHa4e4qHkiNNLdHrY-vbIu"
+DATA_SOURCE_LSOA = "https://drive.google.com/uc?export=download&id=1A9gEvzfN9wbxmBdOx8VIo4kqCoM4OWY5"
 WIMD_URL = "https://drive.google.com/uc?export=download&id=1NC_Lds-IsMXNzy7x_PsRVzESPemoOLF0"
 CHARGE_URL = "https://drive.google.com/uc?export=download&id=1RFtC5hSEIrg5yG1rkmfD8JasAK6h212K"
 
@@ -44,7 +44,11 @@ LSOA_TO_LAD_LAYER = "0"
 LAD_FS = "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Local_Authority_Districts_May_2024_Boundaries_UK_BGC/FeatureServer"
 LAD_LAYER = "0"
 
-# Register as a page
+# LSOA boundaries (England & Wales LSOA 2021 BFE)
+LSOA_FS = "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/LSOA_2021_EW_BFE_V10_RUC/FeatureServer"
+LSOA_LAYER = "3"
+
+# Register as a page (like weather.py)
 register_page(__name__, path="/thrust-one")
 
 
@@ -158,8 +162,31 @@ def arcgis_pjson(url: str) -> dict:
     return out
 
 
+def _arcgis_request(method: str, url: str, *, params: dict, timeout: int = 120, retries: int = 4) -> requests.Response:
+    """ArcGIS Online is occasionally flaky (502/503/504). We retry a few times."""
+    last_exc = None
+    for i in range(retries):
+        try:
+            if method.upper() == "POST":
+                r = requests.post(url, data=params, timeout=timeout)
+            else:
+                r = requests.get(url, params=params, timeout=timeout)
+            # Retry transient gateway/service errors
+            if r.status_code in {502, 503, 504}:
+                time.sleep(1.2 * (i + 1))
+                continue
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            last_exc = e
+            time.sleep(1.2 * (i + 1))
+    raise last_exc
+
+
 def arcgis_query_geojson(fs: str, layer: str, where: str, out_fields: str, page: int = 2000) -> dict:
+    """Paged GeoJSON query (POST to avoid URL-length limits)."""
     feats, offset = [], 0
+    url = f"{fs}/{layer}/query"
     while True:
         params = {
             "where": where,
@@ -170,8 +197,7 @@ def arcgis_query_geojson(fs: str, layer: str, where: str, out_fields: str, page:
             "resultOffset": offset,
             "resultRecordCount": page,
         }
-        r = requests.get(f"{fs}/{layer}/query", params=params, timeout=120)
-        r.raise_for_status()
+        r = _arcgis_request("POST", url, params=params, timeout=180)
         out = r.json()
         if "error" in out:
             raise RuntimeError(f"ArcGIS query error: {out['error']}")
@@ -183,8 +209,23 @@ def arcgis_query_geojson(fs: str, layer: str, where: str, out_fields: str, page:
     return {"type": "FeatureCollection", "features": feats}
 
 
+def arcgis_query_geojson_in_chunks(
+    fs: str, layer: str, field: str, values: list[str], out_fields: str, *,
+    chunk_size: int = 200,
+) -> dict:
+    """GeoJSON query for a long IN (...) list, chunked to avoid huge payloads."""
+    all_feats = []
+    for i in range(0, len(values), chunk_size):
+        chunk = values[i:i + chunk_size]
+        where = sql_in(field, chunk)
+        gj = arcgis_query_geojson(fs, layer, where=where, out_fields=out_fields)
+        all_feats.extend(gj.get("features", []))
+    return {"type": "FeatureCollection", "features": all_feats}
+
+
 def arcgis_query_table(fs: str, layer: str, where: str, out_fields: str, page: int = 2000) -> pd.DataFrame:
     rows, offset = [], 0
+    url = f"{fs}/{layer}/query"
     while True:
         params = {
             "where": where,
@@ -194,8 +235,7 @@ def arcgis_query_table(fs: str, layer: str, where: str, out_fields: str, page: i
             "resultOffset": offset,
             "resultRecordCount": page,
         }
-        r = requests.get(f"{fs}/{layer}/query", params=params, timeout=120)
-        r.raise_for_status()
+        r = _arcgis_request("POST", url, params=params, timeout=120)
         out = r.json()
         if "error" in out:
             raise RuntimeError(f"ArcGIS query error: {out['error']}")
@@ -222,8 +262,15 @@ def pick_field(fields, cands):
 
 
 @lru_cache(maxsize=4)
-def load_bev_df() -> pd.DataFrame:
+def load_bev_lad_df() -> pd.DataFrame:
     df = load_data(DATA_SOURCE)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+@lru_cache(maxsize=4)
+def load_bev_lsoa_df() -> pd.DataFrame:
+    df = load_data(DATA_SOURCE_LSOA)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
@@ -247,18 +294,38 @@ def lad_geojson_for_codes(codes_tuple: tuple[str, ...]) -> tuple[dict, str, Opti
     lad_meta = arcgis_pjson(f"{LAD_FS}/{LAD_LAYER}")
     lad_fields = [f["name"] for f in lad_meta.get("fields", [])]
 
-    lad_code_field = pick_field(lad_fields, ["lad24cd", "lad23cd", "lad22cd", "lad21cd", "lad20cd", "lad19cd", "lad18cd", "ladcd"])
-    lad_name_field = pick_field(lad_fields, ["lad24nm", "lad23nm", "lad22nm", "lad21nm", "lad20nm", "ladnm"])
-    if lad_code_field is None:
+    geo_code_field = pick_field(lad_fields, ["lad24cd", "lad23cd", "lad22cd", "lad21cd", "lad20cd", "lad19cd", "lad18cd", "ladcd"])
+    geo_name_field = pick_field(lad_fields, ["lad24nm", "lad23nm", "lad22nm", "lad21nm", "lad20nm", "ladnm"])
+    if geo_code_field is None:
         raise ValueError(f"Couldn't infer LAD code field. LAD fields include: {lad_fields[:30]} ...")
 
     gj = arcgis_query_geojson(
         LAD_FS,
         LAD_LAYER,
-        sql_in(lad_code_field, list(codes_tuple)),
-        out_fields=",".join([lad_code_field] + ([lad_name_field] if lad_name_field else [])),
+        sql_in(geo_code_field, list(codes_tuple)),
+        out_fields=",".join([geo_code_field] + ([geo_name_field] if geo_name_field else [])),
     )
-    return gj, lad_code_field, lad_name_field
+    return gj, geo_code_field, geo_name_field
+
+@lru_cache(maxsize=4)
+def lsoa_geojson_for_codes(codes_tuple: tuple[str, ...]) -> tuple[dict, str, Optional[str]]:
+    lsoa_meta = arcgis_pjson(f"{LSOA_FS}/{LSOA_LAYER}")
+    lsoa_fields = [f["name"] for f in lsoa_meta.get("fields", [])]
+
+    lsoa_code_field = pick_field(lsoa_fields, ["lsoa21cd", "lsoa11cd", "lsoacd"])
+    lsoa_name_field = pick_field(lsoa_fields, ["lsoa21nm", "lsoa11nm", "lsoanm"])
+    if lsoa_code_field is None:
+        raise ValueError(f"Couldn't infer LSOA code field. LSOA fields include: {lsoa_fields[:30]} ...")
+
+    gj = arcgis_query_geojson_in_chunks(
+        LSOA_FS,
+        LSOA_LAYER,
+        field=lsoa_code_field,
+        values=list(codes_tuple),
+        out_fields=",".join([lsoa_code_field] + ([lsoa_name_field] if lsoa_name_field else [])),
+        chunk_size=200,
+    )
+    return gj, lsoa_code_field, lsoa_name_field
 
 
 def available_quarters(df: pd.DataFrame) -> list[str]:
@@ -276,6 +343,7 @@ def available_quarters(df: pd.DataFrame) -> list[str]:
 def build_thrust_one_map(
     quarter: str,
     *,
+    geo_level: str = "LAD",  # 'LAD' or 'LSOA'
     default_wimd_domain: Optional[str] = "Income",
     show_charging: bool = True,
     show_centroids: bool = False,
@@ -283,33 +351,48 @@ def build_thrust_one_map(
     from shapely.geometry import shape
 
     # ---- BEV prep ----
-    df = load_bev_df().copy()
+    geo_level = (geo_level or "LAD").strip().upper()
+    if geo_level not in {"LAD", "LSOA"}:
+        geo_level = "LAD"
+
+    df = (load_bev_lsoa_df() if geo_level == "LSOA" else load_bev_lad_df()).copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
     code_col = next((c for c in df.columns if c.strip().lower() in {"ons code", "ons_code", "onscode"}), None)
     name_col = next((c for c in df.columns if c.strip().lower() in {"ons geography", "ons_geography", "onsgeography"}), None)
-    if code_col is None or name_col is None:
-        raise ValueError("Couldn't find 'ONS Code'/'ONS Geography' in BEV dataset.")
+    if code_col is None:
+        raise ValueError("Couldn't find 'ONS Code' column in BEV dataset.")
 
     if quarter not in df.columns:
         raise ValueError(f"Quarter {quarter!r} not found in BEV dataset.")
 
     df["value"] = df[quarter].apply(to_int)
-    df = df[df[code_col].astype(str).str.match(r"^W06")].dropna(subset=["value"])
+
+    code_pat = r"^W01" if geo_level == "LSOA" else r"^W06"
+    df[code_col] = df[code_col].astype(str).str.strip()
+    if name_col is not None:
+        df[name_col] = df[name_col].astype(str).str.strip()
+
+    df = df[df[code_col].str.match(code_pat)].dropna(subset=["value"])
 
     codes = df[code_col].astype(str).unique().tolist()
     if not codes:
-        raise ValueError("No Welsh LAD codes found in BEV dataset after filtering (expected W06...).")
+        raise ValueError(f"No Welsh {geo_level} codes found in BEV dataset after filtering (expected {code_pat}).")
 
-    name_by_code = dict(zip(df[code_col].astype(str), df[name_col].astype(str)))
+    name_by_code = dict(zip(df[code_col].astype(str), (df[name_col].astype(str) if name_col else df[code_col].astype(str))))
     bev_by_code = dict(zip(df[code_col].astype(str), df["value"].astype(float)))
     codes_set = set(codes)
 
-    # ---- LAD boundaries ----
-    gj, lad_code_field, lad_name_field = lad_geojson_for_codes(tuple(codes))
+    # ---- boundaries ----
+    if geo_level == "LSOA":
+        gj, geo_code_field, geo_name_field = lsoa_geojson_for_codes(tuple(codes))
+    else:
+        gj, geo_code_field, geo_name_field = lad_geojson_for_codes(tuple(codes))
 
     # ---- BEV heat points ----
     bev_heat_pts = []
     for feat in gj["features"]:
-        lad_code = str((feat.get("properties") or {}).get(lad_code_field))
+        lad_code = str((feat.get("properties") or {}).get(geo_code_field))
         v = bev_by_code.get(lad_code)
         if v is None or not np.isfinite(v):
             continue
@@ -319,16 +402,19 @@ def build_thrust_one_map(
     lats = [p[0] for p in bev_heat_pts]
     lons = [p[1] for p in bev_heat_pts]
 
+
     # ---- base map + tiles ----
     m = folium.Map(location=[float(np.mean(lats)), float(np.mean(lons))], zoom_start=8, tiles=None)
-    folium.TileLayer("OpenStreetMap", name="OSM (default)", show=True).add_to(m)
-    folium.TileLayer("cartodbpositron", name="CartoDB Positron").add_to(m)
-    folium.TileLayer("cartodbdark_matter", name="CartoDB Dark").add_to(m)
+    folium.TileLayer("cartodbpositron", name="CartoDB Positron", show=True).add_to(m)
+    folium.TileLayer("OpenStreetMap", name="OSM (default)", show=False).add_to(m)
+    folium.TileLayer("cartodbdark_matter", name="CartoDB Dark", show=False).add_to(m)
     folium.TileLayer(
-        tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-        attr="© OpenTopoMap (CC-BY-SA)",
-        name="OpenTopoMap",
-    ).add_to(m)
+           tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+           attr="© OpenTopoMap (CC-BY-SA)",
+           name="OpenTopoMap",
+           show=False,
+           ).add_to(m)
+
 
     # ---- BEV layer ----
     HeatMap(
@@ -345,7 +431,7 @@ def build_thrust_one_map(
     if show_centroids:
         quarter_layer = folium.FeatureGroup(name=f"{quarter} values (centroids)", show=True)
         for feat in gj["features"]:
-            lad_code = str((feat.get("properties") or {}).get(lad_code_field))
+            lad_code = str((feat.get("properties") or {}).get(geo_code_field))
             v = bev_by_code.get(lad_code)
             if v is None or not np.isfinite(v):
                 continue
@@ -376,45 +462,62 @@ def build_thrust_one_map(
     wimd["Domain"] = wimd["Domain"].astype(str).str.strip()
     wimd["__value_num"] = wimd["Data values"].apply(parse_num)
 
-    # LAD-direct first
-    wimd_lad_num = wimd[wimd["Area code"].isin(codes_set)].dropna(subset=["__value_num"]).copy()
     domain_value_by_code: Dict[str, Dict[str, float]] = {}
 
-    if not wimd_lad_num.empty:
-        for dom in sorted(wimd_lad_num["Domain"].dropna().unique().tolist()):
-            d = wimd_lad_num[wimd_lad_num["Domain"] == dom]
-            domain_value_by_code[str(dom)] = dict(zip(d["Area code"], d["__value_num"].astype(float)))
-    else:
-        # LSOA-level (W01...) -> LTLA22CD aggregation
+    if geo_level == "LSOA":
         wimd_lsoa = wimd[wimd["Area code"].str.match(r"^W01")].dropna(subset=["__value_num"]).copy()
         if wimd_lsoa.empty:
-            raise ValueError("WIMD file has no numeric 'Data values' for LAD codes and no usable W01 LSOA rows.")
+            raise ValueError("WIMD file has no usable W01 (Welsh LSOA) rows with numeric 'Data values'.")
+        for dom in sorted(wimd_lsoa["Domain"].dropna().unique().tolist()):
+            d = wimd_lsoa[wimd_lsoa["Domain"] == dom]
+            domain_value_by_code[str(dom)] = dict(zip(d["Area code"], d["__value_num"].astype(float)))
+    else:
+        # LAD-direct first
+        wimd_lad_num = wimd[wimd["Area code"].isin(codes_set)].dropna(subset=["__value_num"]).copy()
+        if not wimd_lad_num.empty:
+            for dom in sorted(wimd_lad_num["Domain"].dropna().unique().tolist()):
+                d = wimd_lad_num[wimd_lad_num["Domain"] == dom]
+                domain_value_by_code[str(dom)] = dict(zip(d["Area code"], d["__value_num"].astype(float)))
+        else:
+            # LSOA-level (W01...) -> LTLA22CD aggregation
+            wimd_lsoa = wimd[wimd["Area code"].str.match(r"^W01")].dropna(subset=["__value_num"]).copy()
+            if wimd_lsoa.empty:
+                raise ValueError("WIMD file has no numeric 'Data values' for LAD codes and no usable W01 LSOA rows.")
 
-        lsoa_meta = arcgis_pjson(f"{LSOA_TO_LAD_FS}/{LSOA_TO_LAD_LAYER}")
-        lsoa_fields = [f["name"] for f in lsoa_meta.get("fields", [])]
+            lsoa_meta = arcgis_pjson(f"{LSOA_TO_LAD_FS}/{LSOA_TO_LAD_LAYER}")
+            lsoa_fields = [f["name"] for f in lsoa_meta.get("fields", [])]
 
-        lsoa_code_field = pick_field(lsoa_fields, ["lsoa21cd", "lsoa11cd", "lsoacd"])
-        lad_lookup_field = pick_field(lsoa_fields, ["ltla22cd", "lad22cd", "lad23cd", "lad24cd", "ladcd"])
-        if lsoa_code_field is None or lad_lookup_field is None:
-            raise ValueError(f"Couldn't infer LSOA->LTLA lookup fields. Fields include: {lsoa_fields[:40]} ...")
+            lsoa_code_field = pick_field(lsoa_fields, ["lsoa21cd", "lsoa11cd", "lsoacd"])
+            lad_lookup_field = pick_field(lsoa_fields, ["ltla22cd", "lad22cd", "lad23cd", "lad24cd", "ladcd"])
+            if lsoa_code_field is None or lad_lookup_field is None:
+                raise ValueError(f"Couldn't infer LSOA->LTLA lookup fields. Fields include: {lsoa_fields[:40]} ...")
 
-        where = f"{lsoa_code_field} LIKE 'W01%'"
-        lookup = arcgis_query_table(
-            LSOA_TO_LAD_FS,
-            LSOA_TO_LAD_LAYER,
-            where=where,
-            out_fields=",".join([lsoa_code_field, lad_lookup_field]),
-        )
-        lookup[lsoa_code_field] = lookup[lsoa_code_field].astype(str).str.strip()
-        lookup[lad_lookup_field] = lookup[lad_lookup_field].astype(str).str.strip()
+            where = f"{lsoa_code_field} LIKE 'W01%'"
+            lookup = arcgis_query_table(
+                LSOA_TO_LAD_FS,
+                LSOA_TO_LAD_LAYER,
+                where=where,
+                out_fields=",".join([lsoa_code_field, lad_lookup_field]),
+            )
+            lookup[lsoa_code_field] = lookup[lsoa_code_field].astype(str).str.strip()
+            lookup[lad_lookup_field] = lookup[lad_lookup_field].astype(str).str.strip()
 
-        merged = wimd_lsoa.merge(lookup, left_on="Area code", right_on=lsoa_code_field, how="left")
-        merged = merged.dropna(subset=[lad_lookup_field, "__value_num"])
-        merged = merged[merged[lad_lookup_field].isin(codes_set)].copy()
+            merged = wimd_lsoa.merge(lookup, left_on="Area code", right_on=lsoa_code_field, how="left")
+            merged = merged.dropna(subset=[lad_lookup_field, "__value_num"])
+            merged = merged[merged[lad_lookup_field].isin(codes_set)].copy()
 
-        for dom, g in merged.groupby("Domain", dropna=True):
-            lad_vals = g.groupby(lad_lookup_field)["__value_num"].mean()
-            domain_value_by_code[str(dom)] = lad_vals.to_dict()
+            for dom, g in merged.groupby("Domain", dropna=True):
+                lad_vals = g.groupby(lad_lookup_field)["__value_num"].mean()
+                domain_value_by_code[str(dom)] = lad_vals.to_dict()
+
+    # ---- WIMD layers ----
+    WIMD_GRADIENT = {
+        0.00: "#f7fbff",
+        0.40: "#c6dbef",
+        0.70: "#6baed6",
+        0.90: "#2171b5",
+        1.00: "#08306b",
+    }
 
     preferred_domains = [
         "Income", "Employment", "Health", "Education",
@@ -425,21 +528,17 @@ def build_thrust_one_map(
 
     from shapely.geometry import shape as _shape  # avoid any shadowing
 
-    # ---- WIMD layers (choropleths) ----
     for dom in domains_sorted:
         val_by_lad = domain_value_by_code[dom]
         dmini = pd.DataFrame({"Area code": list(val_by_lad.keys()), "val": list(val_by_lad.values())})
 
-        show_this = (
-            default_wimd_domain is not None
-            and str(dom).strip().lower() == str(default_wimd_domain).strip().lower()
-        )
+        show_this = (default_wimd_domain is not None and str(dom).strip().lower() == str(default_wimd_domain).strip().lower())
 
         folium.Choropleth(
             geo_data=gj,
             data=dmini,
             columns=["Area code", "val"],
-            key_on=f"feature.properties.{lad_code_field}",
+            key_on=f"feature.properties.{geo_code_field}",
             name=f"WIMD {dom} (choropleth)",
             fill_color="BuGn",
             fill_opacity=0.14,
@@ -450,14 +549,35 @@ def build_thrust_one_map(
             show=show_this,
         ).add_to(m)
 
+        pts = []
+        for feat in gj["features"]:
+            lad_code = str((feat.get("properties") or {}).get(geo_code_field))
+            v = val_by_lad.get(lad_code)
+            if v is None or not np.isfinite(v):
+                continue
+            c = _shape(feat["geometry"]).centroid
+            pts.append([c.y, c.x, float(v)])
+
+        if pts:
+            HeatMap(
+                pts,
+                radius=35,
+                blur=32,
+                max_zoom=10,
+                gradient=WIMD_GRADIENT,
+                min_opacity=0.12,
+                name=f"WIMD {dom} (heatmap)",
+                show=False,
+            ).add_to(m)
+
     # ---- Hover tooltip (values only; no codes) ----
     hover_gj = {"type": "FeatureCollection", "features": []}
     for feat in gj["features"]:
         props0 = feat.get("properties") or {}
-        lad_code = str(props0.get(lad_code_field))
-        lad_name = name_by_code.get(lad_code, props0.get(lad_name_field, lad_code))
+        lad_code = str(props0.get(geo_code_field))
+        lad_name = name_by_code.get(lad_code, props0.get(geo_name_field, lad_code))
 
-        props = {"LAD": lad_name}
+        props = {("LSOA" if geo_level=="LSOA" else "LAD"): lad_name}
         bev = bev_by_code.get(lad_code)
         props[f"BEV ({quarter})"] = f"{int(bev):,}" if (bev is not None and np.isfinite(bev)) else "NA"
 
@@ -467,8 +587,9 @@ def build_thrust_one_map(
 
         hover_gj["features"].append({"type": "Feature", "geometry": feat["geometry"], "properties": props})
 
-    tooltip_fields = ["LAD", f"BEV ({quarter})"] + [f"WIMD {dom} (rank)" for dom in domains_sorted]
-    tooltip_aliases = ["LAD:", f"BEV ({quarter}):"] + [f"{dom} rank:" for dom in domains_sorted]
+        geo_label = "LSOA" if geo_level=="LSOA" else "LAD"
+    tooltip_fields = [geo_label, f"BEV ({quarter})"] + [f"WIMD {dom} (rank)" for dom in domains_sorted]
+    tooltip_aliases = [f"{geo_label}:", f"BEV ({quarter}):"] + [f"{dom} rank:" for dom in domains_sorted]
 
     folium.GeoJson(
         hover_gj,
@@ -535,6 +656,51 @@ def build_thrust_one_map(
     macro._template = Template(css)
     m.get_root().add_child(macro)
 
+    
+    # --- Enforce single-select for WIMD choropleth layers in the Layer Control ---
+    js = """
+    {% macro html(this, kwargs) %}
+    <script>
+    (function() {
+      function isWimdChoroLabel(lblText) {
+        return (lblText || '').trim().startsWith('WIMD ') && (lblText || '').includes('(choropleth)');
+      }
+      function wire() {
+        var ctl = document.querySelector('.leaflet-control-layers');
+        if (!ctl) { return; }
+        ctl.addEventListener('change', function(ev) {
+          var t = ev.target;
+          if (!t || t.type !== 'checkbox' || !t.checked) { return; }
+          var label = t.closest('label');
+          if (!label) { return; }
+          var txt = label.textContent || '';
+          if (!isWimdChoroLabel(txt)) { return; }
+          // turn off any other checked WIMD choropleths by clicking them
+          var inputs = ctl.querySelectorAll('input[type="checkbox"]');
+          inputs.forEach(function(inp) {
+            if (inp === t || !inp.checked) { return; }
+            var lab = inp.closest('label');
+            if (!lab) { return; }
+            var lt = lab.textContent || '';
+            if (isWimdChoroLabel(lt)) {
+              inp.click();
+            }
+          });
+        }, true);
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wire);
+      } else {
+        wire();
+      }
+    })();
+    </script>
+    {% endmacro %}
+    """
+    js_macro = MacroElement()
+    js_macro._template = Template(js)
+    m.get_root().add_child(js_macro)
+
     folium.LayerControl(collapsed=False).add_to(m)
 
     return m._repr_html_()
@@ -549,25 +715,9 @@ try:
 except Exception:
     QUARTERS = ["2025 Q3"]
 
-# Build an initial map once for first render (still manual thereafter)
-try:
-    _INITIAL_MAP = build_thrust_one_map(
-        QUARTERS[0],
-        default_wimd_domain="Income",
-        show_charging=True,
-        show_centroids=True,
-    )
-    _INITIAL_MSG = "Ready. Change options then click “Update map”."
-except Exception as e:
-    _INITIAL_MAP = folium.Map(location=[51.5, -3.2], zoom_start=7)._repr_html_()
-    _INITIAL_MSG = f"Initial map build failed: {e}"
-
 layout = html.Div(
     [
-        html.H1(
-            "B) Thrust One: BEV uptake, deprivation and charging points",
-            style={"textAlign": "center", "marginBottom": "10px"},
-        ),
+        html.H1("D) Clean and Equitable Transportation Solutions", style={"textAlign": "center", "marginBottom": "10px"}),
         html.P(
             "Interactive map for Wales combining BEV keepership (selected quarter), WIMD 2025 deprivation ranks (by domain), and EV charging points.",
             style={"textAlign": "center"},
@@ -613,30 +763,23 @@ layout = html.Div(
                                 {"label": "Show charging points", "value": "charging"},
                                 {"label": "Enable centroid labels layer", "value": "centroids"},
                             ],
-                            value=["charging"],
+                            
+			    value=["charging", "centroids"],
                             style={"marginTop": "6px"},
                         ),
                     ],
                     style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
                 ),
-                html.Button(
-                    "Update map",
-                    id="t1-refresh",
-                    n_clicks=0,
-                    style={"marginLeft": "14px", "height": "38px"},
-                ),
+                html.Button("Update map", id="t1-refresh", n_clicks=0, style={"marginLeft": "14px", "height": "38px"}),
             ],
             style={"textAlign": "center", "margin": "15px"},
         ),
-        dcc.Loading(
-            type="default",
-            children=html.Iframe(
-                id="t1-map",
-                srcDoc=_INITIAL_MAP,
-                style={"width": "100%", "height": "860px", "border": "none"},
-            ),
+        html.Iframe(
+            id="t1-map",
+            srcDoc=build_thrust_one_map(QUARTERS[0], geo_level="LAD", default_wimd_domain="Income", show_charging=True, show_centroids=True),
+            style={"width": "100%", "height": "1260px", "border": "none"},
         ),
-        html.Div(id="t1-info", children=_INITIAL_MSG, style={"textAlign": "center", "marginTop": "10px"}),
+        html.Div(id="t1-info", style={"textAlign": "center", "marginTop": "10px"}),
     ]
 )
 
@@ -646,11 +789,12 @@ layout = html.Div(
     Output("t1-info", "children"),
     Input("t1-refresh", "n_clicks"),
     State("t1-quarter", "value"),
+    State("t1-geo", "value"),
     State("t1-wimd-default", "value"),
     State("t1-options", "value"),
-    prevent_initial_call=True,  # MANUAL ONLY: callback won't run on page load
+    prevent_initial_call=True,
 )
-def update_thrust_one_map(n_clicks, quarter, wimd_default, options):
+def update_thrust_one_map(n_clicks, quarter, geo_level, wimd_default, options):
     options = options or []
     show_charging = "charging" in options
     show_centroids = "centroids" in options
@@ -658,15 +802,13 @@ def update_thrust_one_map(n_clicks, quarter, wimd_default, options):
     try:
         html_map = build_thrust_one_map(
             quarter,
+            geo_level=geo_level or "LAD",
             default_wimd_domain=wimd_default if (wimd_default and str(wimd_default).strip()) else None,
             show_charging=show_charging,
             show_centroids=show_centroids,
         )
-        msg = (
-            f"Updated at {time.strftime('%H:%M:%S')} (quarter: {quarter}). "
-            "Use the Layer Control (top-right) to toggle domains and layers."
-        )
+        msg = f"Updated at {time.strftime('%H:%M:%S')} (quarter: {quarter}; geography: {geo_level}). Use the Layer Control (top-right) to toggle domains and layers."
         return html_map, msg
     except Exception as e:
-        # IMPORTANT: keep the existing (last good) map; do NOT replace it with a fallback.
-        return no_update, f"Error building map (kept previous): {e}"
+        fallback = folium.Map(location=[51.5, -3.2], zoom_start=7)._repr_html_()
+        return fallback, f"Error building map: {e}"
