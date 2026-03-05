@@ -26,7 +26,7 @@ layout = html.Div([
                     "width": "100%",
                     "margin": "0 auto",
                     "display": "block",
-                    "fontSize": "45px"
+                    "fontSize": "65px"
                 }
             )
         ],
@@ -62,11 +62,11 @@ layout = html.Div([
                         }
                     ),
                     html.A(
-                        "A) Weather Forecaster",
+                        "A) Weather Forecast for South Wales",
                         href="/weather-forecaster",
                         style={"fontWeight": "bold", "textDecoration": "none"}
                     ),
-                    html.P("Weather forecasting for Wales using live Open-Meteo APIs.")
+                    html.P("A weather dashboard built using the Open-Meteo API.")
                 ],
                 style={
                     "border": "1px solid #cfe2f3",
@@ -95,11 +95,11 @@ layout = html.Div([
                         }
                     ),
                     html.A(
-                        "B) UK Average Temperature Predictions",
+                        "B)  Climate and Emissions Visualization",
                         href="/heat-uk",
                         style={"fontWeight": "bold", "textDecoration": "none"}
                     ),
-                    html.P("UKCP18 RCM daily mean temperature data. Source: DAFNI.")
+                    html.P("An interactive map that visualizes UK greenhouse gas emissions and projected UK average temperature trends from 1980 to 2080.")
                 ],
                 style={
                     "border": "1px solid #f6c28b",
@@ -128,11 +128,11 @@ layout = html.Div([
                         }
                     ),
                     html.A(
-                        "C) EV Travel Planning",
+                        "C) Electric Vehicle (EV) Journey Planner During Floods",
                         href="/ev-travel-planning",
                         style={"fontWeight": "bold", "textDecoration": "none"}
                     ),
-                    html.P("EV chargers, flood overlays, and CLEETS-SMART journey simulator.")
+                    html.P("An interactive map that helps plan EV routes during flooding events. ")
                 ],
                 style={
                     "border": "1px solid #cfe2f3",
@@ -192,11 +192,11 @@ layout = html.Div([
                         }
                     ),
                     html.A(
-                        "E) CLEETS-SMART WestMidlands",
+                        "E) West Midlands (UK) Flood and EV Monitoring",
                         href="/westmidlands",
                         style={"fontWeight": "bold", "textDecoration": "none"}
                     ),
-                    html.P("EV chargers and flood overlays.")
+                    html.P("A dashboard that combines EV charging-point locations in the West Midlands with flood-risk layers and live flood warnings from the UK Environment Agency.")
                 ],
                 style={
                     "border": "1px solid #cfe2f3",

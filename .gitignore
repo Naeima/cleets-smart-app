@@ -21,3 +21,20 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+# caches
+.cache_ev/
+.cache_ev_c/
+.cache_wfs/
+cache/
+
+# large data
+heat_data/
+*.parquet
+*.html
+
+# python
+__pycache__/
+*.pyc
+
+# secrets
+.env

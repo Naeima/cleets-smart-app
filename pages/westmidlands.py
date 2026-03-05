@@ -569,41 +569,31 @@ def _wfs_fetch_polys_union_prepared(base_url, keywords, clip_poly):
         return None
     return prep(unary_union(geoms))
  
- 
 def _ensure_fz_unions():
+    """Compute and cache prepared unions for Flood Zone 2 and 3 within WM_BBOX."""
     global FZ2_UNION_PREP, FZ3_UNION_PREP
     if FZ2_UNION_PREP is None:
-        FZ2_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ2, ["zone", "flood", "2"], WM_BBOX)
+        FZ2_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ2, ["zone","flood","2"], WM_BBOX)
     if FZ3_UNION_PREP is None:
-        FZ3_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ3, ["zone", "flood", "3"], WM_BBOX)
- 
- 
+        FZ3_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ3, ["zone","flood","3"], WM_BBOX)
+
 # =========================
-# Map builder
+# Map builder (OSM water overlay + EA polygons + WMS + FZ-based station colouring)
 # =========================
 def build_map(selected_severities=None, floods=None):
     m = folium.Map(location=[52.4862, -1.8904], zoom_start=10, tiles=None)
- 
     BASEMAPS = {
-        "OSM Standard": ("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", "© OpenStreetMap contributors"),
-        "CARTO Positron": ("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", "© OpenStreetMap, © CARTO"),
-        "CARTO Dark Matter": ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", "© OpenStreetMap, © CARTO"),
-        "Esri World Imagery (satellite)": ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", "Tiles © Esri"),
-        "Esri World Gray Canvas": ("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", "Tiles © Esri"),
+        "OSM Standard": ("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png","© OpenStreetMap contributors"),
+        "CARTO Positron": ("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png","© OpenStreetMap, © CARTO"),
+        "CARTO Dark Matter": ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png","© OpenStreetMap, © CARTO"),
+        "Esri World Imagery (satellite)": ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}","Tiles © Esri"),
+        "Esri World Gray Canvas": ("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}","Tiles © Esri"),
     }
- 
     for name, (tiles, attr) in BASEMAPS.items():
-        folium.TileLayer(
-            tiles=tiles,
-            attr=attr,
-            name=name,
-            control=True,
-            show=(name == "Esri World Imagery (satellite)"),
-        ).add_to(m)
- 
-    # --- OSM Water overlay ---
-    water_fg = folium.FeatureGroup(
-    name="OSM Water (lakes/riverbanks)", show=True)
+        folium.TileLayer(tiles=tiles, attr=attr, name=name, control=True,
+                         show=(name == "Esri World Imagery (satellite)")).add_to(m)
+
+    # --- OSM Water overlay (optional visual context) ---
     global WATER_CACHE
     if WATER_CACHE is None:
         WATER_CACHE = fetch_osm_water_polys(WM_BBOX)
@@ -612,76 +602,72 @@ def build_map(selected_severities=None, floods=None):
         WATER_STYLE = dict(fillColor="#1565C0", color="#0D47A1", weight=1.0, fillOpacity=0.55)
         for geom in WATER_CACHE:
             try:
-                folium.GeoJson(data=mapping(geom), style_function=lambda _f, s=WATER_STYLE: s).add_to(water_fg)
+                folium.GeoJson(data=mapping(geom),
+                               style_function=lambda _f, s=WATER_STYLE: s).add_to(water_fg)
             except Exception:
                 continue
         water_fg.add_to(m)
- 
-    # --- EA WMS overlays ---
-    add_ea_wms(m, WMS_FZ2, keywords=["zone", "flood", "2"], layer_label="Flood Zone 2 (undefended)", show=False)
-    add_ea_wms(m, WMS_FZ3, keywords=["zone", "flood", "3"], layer_label="Flood Zone 3 (undefended)", show=False)
-    add_ea_wms(m, WMS_RoFRS, keywords=["risk", "river", "sea"], layer_label="Risk of Flooding (Rivers & Sea)", show=True, opacity=0.5)
-    add_ea_wms(m, WMS_FloodWarnings, keywords=["flood", "warning", "area"], layer_label="Flood Warning Areas", show=False)
- 
-    # --- Live EA Flood Risk Areas overlay ---
+
+    # === EA WMS overlays: clearly mark flood areas ===
+    add_ea_wms(m, WMS_FZ2,           keywords=['zone','flood','2'],       layer_label="Flood Zone 2 (undefended)", show=False)
+    add_ea_wms(m, WMS_FZ3,           keywords=['zone','flood','3'],       layer_label="Flood Zone 3 (undefended)", show=False)
+    add_ea_wms(m, WMS_RoFRS,         keywords=['risk','river','sea'],     layer_label="Risk of Flooding (Rivers & Sea)", show=True, opacity=0.5)
+    add_ea_wms(m, WMS_FloodWarnings, keywords=['flood','warning','area'], layer_label="Flood Warning Areas", show=False)
+
+    # === Live EA Flood Risk Areas overlay (from flood-monitoring feed) ===
     raw_floods = floods if floods is not None else fetch_ea_floods()
     if selected_severities:
-        floods_for_polys = [
-            f
-            for f in raw_floods
-            if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) in selected_severities
-        ]
+        floods_for_polys = [f for f in raw_floods if str(f.get('severityLevel','')).isdigit()
+                            and int(f['severityLevel']) in selected_severities]
     else:
         floods_for_polys = raw_floods
- 
+
     areas_fg = folium.FeatureGroup(name="EA Flood Risk Areas (live)", show=True)
- 
     for it in floods_for_polys:
         try:
-            sev = int(it.get("severityLevel", 0) or 0)
+            sev = int(it.get('severityLevel', 0) or 0)
         except Exception:
             continue
         if sev not in SEVERITY_LABEL:
             continue
- 
-        fa = it.get("floodArea") or {}
+
+        fa = it.get('floodArea') or {}
         geom = None
- 
-        poly_wkt = fa.get("polygon")
+
+        # Prefer polygon on the item; fallback to cached floodAreas
+        poly_wkt = fa.get('polygon')
         if poly_wkt:
             try:
                 geom = shapely_wkt.loads(poly_wkt)
             except Exception:
                 geom = None
- 
         if geom is None:
-            key = fa.get("notation") or fa.get("id") or fa.get("code")
+            key = fa.get('notation') or fa.get('id') or fa.get('code')
             area = EA_AREAS_CACHE.get(key)
             if area:
-                geom = area["geometry"]
- 
+                geom = area['geometry']
         if geom is None:
             continue
- 
+
         try:
             geom = geom.intersection(WM_BBOX)
             if geom.is_empty:
                 continue
         except Exception:
             continue
- 
+
         rag_colour = _sev_to_rag(sev)
         feature = {
             "type": "Feature",
             "properties": {
                 "severity": SEVERITY_LABEL[sev],
-                "label": fa.get("label") or fa.get("eaAreaName") or "",
-                "river": fa.get("riverOrSea") or "",
-                "rag": rag_colour,
+                "label": fa.get('label') or fa.get('eaAreaName') or "",
+                "river": fa.get('riverOrSea') or "",
+                "rag": rag_colour
             },
-            "geometry": mapping(geom),
+            "geometry": mapping(geom)
         }
- 
+
         folium.GeoJson(
             data=feature,
             name=f"EA {SEVERITY_LABEL[sev]}",
@@ -691,19 +677,21 @@ def build_map(selected_severities=None, floods=None):
                 "weight": 0.8,
                 "fillOpacity": 0.35,
             },
-            highlight_function=lambda _f: {"weight": 2.0, "fillOpacity": 0.55},
+            highlight_function=lambda f: {
+                "weight": 2.0,
+                "fillOpacity": 0.55,
+            },
             tooltip=folium.GeoJsonTooltip(
                 fields=["label", "severity", "river"],
                 aliases=["Area", "Severity", "River/Sea"],
                 sticky=True,
             ),
         ).add_to(areas_fg)
- 
     areas_fg.add_to(m)
- 
-    # --- Flood Zone-based classification for chargers (FZ3 -> FZ2 -> Outside) ---
+
+    # === Flood Zone-based classification for chargers (FZ3 -> FZ2 -> Outside) ===
     _ensure_fz_unions()
- 
+
     def fz_class(row):
         pt = row.geometry
         if FZ3_UNION_PREP and FZ3_UNION_PREP.contains(pt):
@@ -711,70 +699,49 @@ def build_map(selected_severities=None, floods=None):
         if FZ2_UNION_PREP and FZ2_UNION_PREP.contains(pt):
             return ("Flood Zone 2 (undefended)", AMBER)
         return ("Outside FZ2/FZ3", GREEN)
- 
-    classes = west_midlands_gdf.apply(fz_class, axis=1, result_type="expand")
-    west_midlands_gdf["RiskLabel"] = classes[0]
-    west_midlands_gdf["RiskColor"] = classes[1]
- 
-    red_group = folium.FeatureGroup(name="Chargers: Flood Zone 3 (red)", show=True)
+
+    classes = west_midlands_gdf.apply(fz_class, axis=1, result_type='expand')
+    west_midlands_gdf['RiskLabel'] = classes[0]
+    west_midlands_gdf['RiskColor'] = classes[1]
+
+    # === Charger markers clustered by Flood Zone category ===
+    red_group   = folium.FeatureGroup(name="Chargers: Flood Zone 3 (red)", show=True)
     amber_group = folium.FeatureGroup(name="Chargers: Flood Zone 2 (amber)", show=True)
-    safe_group = folium.FeatureGroup(name="Chargers: Outside FZ2/FZ3 (green)", show=True)
- 
-    red_cluster = MarkerCluster(name="Cluster: FZ3").add_to(red_group)
+    safe_group  = folium.FeatureGroup(name="Chargers: Outside FZ2/FZ3 (green)", show=True)
+
+    red_cluster   = MarkerCluster(name="Cluster: FZ3").add_to(red_group)
     amber_cluster = MarkerCluster(name="Cluster: FZ2").add_to(amber_group)
-    safe_cluster = MarkerCluster(name="Cluster: Outside").add_to(safe_group)
- 
+    safe_cluster  = MarkerCluster(name="Cluster: Outside").add_to(safe_group)
+
     def make_icon(color_hex):
         border = {RED: "#B71C1C", AMBER: "#FF8F00", GREEN: "#1B5E20"}.get(color_hex, "#1B5E20")
-        return BeautifyIcon(
-            icon="bolt",
-            icon_shape="marker",
-            background_color=color_hex,
-            border_color=border,
-            border_width=3,
-            text_color="white",
-            inner_icon_style="font-size:22px;padding-top:2px;",
-        )
- 
+        return BeautifyIcon(icon="bolt", icon_shape="marker",
+                            background_color=color_hex, border_color=border, border_width=3,
+                            text_color="white", inner_icon_style="font-size:22px;padding-top:2px;")
+
     for _, row in west_midlands_gdf.iterrows():
-        label = row["RiskLabel"]
-        color = row["RiskColor"]
-        popup_html = (
-            f"<b>Town/City:</b> {row['Town']}<br>"
-            f"<b>Postcode:</b> {row['Postcode']}<br>"
-            f"<b>Status:</b> {row['Status']}<br>"
-            f"<b>Operator:</b> {row['Operator']}<br>"
-            f"<b>Zone:</b> {label}"
-        )
- 
-        marker = folium.Marker(
-            location=[row["Latitude"], row["Longitude"]],
-            icon=make_icon(color),
-            popup=folium.Popup(popup_html, max_width=420),
-            tooltip=f"{row['Town']} • {row['Postcode']} • {label}",
-        )
- 
-        if color == RED:
-            red_cluster.add_child(marker)
-        elif color == AMBER:
-            amber_cluster.add_child(marker)
-        else:
-            safe_cluster.add_child(marker)
- 
-    red_group.add_to(m)
-    amber_group.add_to(m)
-    safe_group.add_to(m)
- 
+        label = row['RiskLabel']; color = row['RiskColor']
+        popup_html = (f"<b>Town/City:</b> {row['Town']}<br>"
+                      f"<b>Status:</b> {row['Status']}<br>"
+                      f"<b>Operator:</b> {row['Operator']}<br>"
+                      f"<b>Zone:</b> {label}")
+        marker = folium.Marker(location=[row['Latitude'], row['Longitude']],
+                               icon=make_icon(color), popup=folium.Popup(popup_html, max_width=420))
+        if color == RED: red_cluster.add_child(marker)
+        elif color == AMBER: amber_cluster.add_child(marker)
+        else: safe_cluster.add_child(marker)
+
+    red_group.add_to(m); amber_group.add_to(m); safe_group.add_to(m)
     Draw(export=True).add_to(m)
     folium.LayerControl(collapsed=False).add_to(m)
- 
-    # --- Top-left KPI blocks (live counts) ---
-    count_sev1 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 1)
-    count_sev2 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 2)
-    count_sev3 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 3)
-    count_sev4 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 4)
-    count_red = count_sev1 + count_sev2
- 
+
+    # === Top-left alert blocks (live feed counts – optional, kept) ===
+    count_sev1 = sum(1 for f in raw_floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) == 1)
+    count_sev2 = sum(1 for f in raw_floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) == 2)
+    count_sev3 = sum(1 for f in raw_floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) == 3)
+    count_sev4 = sum(1 for f in raw_floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) == 4)
+    count_red   = count_sev1 + count_sev2
+
     alert_panel = f"""
     <div style="position: fixed; top: 12px; left: 12px; z-index: 9999; display:flex; gap:8px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;">
       <div style="background:{RED}; color:white; padding:6px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.25);">
@@ -791,8 +758,8 @@ def build_map(selected_severities=None, floods=None):
       </div>
     </div>"""
     m.get_root().html.add_child(folium.Element(alert_panel))
- 
-    # --- Legends ---
+
+    # === Legends ===
     rag_legend = f"""
     <div style="position: fixed; bottom: 120px; left: 20px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-size: 13px;">
       <b>EA Flood Areas (RAG)</b><br>
@@ -801,7 +768,7 @@ def build_map(selected_severities=None, floods=None):
       <span style="display:inline-block;width:12px;height:12px;background:{GREEN};margin-right:6px;border:1px solid #555;"></span> No longer in force (4)
     </div>"""
     m.get_root().html.add_child(folium.Element(rag_legend))
- 
+
     chargers_legend = f"""
     <div style="position: fixed; bottom: 20px; left: 20px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-size: 13px;">
       <b>Chargers by Flood Zone (undefended)</b><br>
@@ -810,78 +777,52 @@ def build_map(selected_severities=None, floods=None):
       <span style="display:inline-block;width:12px;height:12px;background:{GREEN};margin-right:6px;border:1px solid #555;"></span> Outside FZ2/FZ3
     </div>"""
     m.get_root().html.add_child(folium.Element(chargers_legend))
- 
+
     return m
- 
- 
+
 # =========================
 # Live feed + table helpers
 # =========================
 def parse_iso(ts: str):
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except Exception:
-        return None
- 
- 
+    if not ts: return None
+    try: return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception: return None
+
 def format_feed_items(floods, tz="Europe/London", limit=50):
     def best_time(it):
         return (
-            parse_iso(it.get("timeSeverityChanged"))
-            or parse_iso(it.get("timeMessageChanged"))
-            or parse_iso(it.get("timeRaised"))
-            or parse_iso(it.get("timeUpdated"))
-            or datetime.now(timezone.utc)
+            parse_iso(it.get('timeSeverityChanged')) or
+            parse_iso(it.get('timeMessageChanged')) or
+            parse_iso(it.get('timeRaised')) or
+            parse_iso(it.get('timeUpdated')) or
+            datetime.now(timezone.utc)
         )
- 
-    floods_sorted = sorted(floods, key=lambda it: (int(it.get("severityLevel", 9) or 9), best_time(it)))
+    floods_sorted = sorted(floods, key=lambda it: (int(it.get('severityLevel', 9) or 9), best_time(it)))
     out = []
     for it in floods_sorted[:limit]:
-        sev = int(it.get("severityLevel", 0) or 0)
+        sev = int(it.get('severityLevel', 0) or 0)
         sev_txt = SEVERITY_LABEL.get(sev, f"Unknown ({sev})")
         chip = _sev_to_rag(sev)
-        fa = it.get("floodArea", {}) or {}
-        area = fa.get("label") or fa.get("eaAreaName") or fa.get("description") or fa.get("riverOrSea") or "Area"
-        msg = it.get("message") or it.get("description") or it.get("severity") or ""
-        when = (
-            parse_iso(it.get("timeSeverityChanged"))
-            or parse_iso(it.get("timeMessageChanged"))
-            or parse_iso(it.get("timeRaised"))
-            or parse_iso(it.get("timeUpdated"))
-        )
+        fa = it.get('floodArea', {}) or {}
+        area = fa.get('label') or fa.get('eaAreaName') or fa.get('description') or fa.get('riverOrSea') or "Area"
+        msg = it.get('message') or it.get('description') or it.get('severity') or ""
+        when = (parse_iso(it.get('timeSeverityChanged')) or parse_iso(it.get('timeMessageChanged')) or
+                parse_iso(it.get('timeRaised')) or parse_iso(it.get('timeUpdated')))
         when_local = when.astimezone(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M") if when else "—"
-        link = it.get("@id") or it.get("id") or EA_FLOODS_URL
- 
-        badge = html.Span(
-            sev_txt,
-            style={
-                "background": chip,
-                "color": ("black" if chip == AMBER else "white"),
-                "padding": "2px 6px",
-                "borderRadius": "6px",
-                "fontSize": "12px",
-                "marginRight": "8px",
-            },
-        )
-        row = html.Div(
-            [
-                badge,
-                html.Span(area, style={"fontWeight": "600"}),
-                html.Span(f" — {msg}", style={"opacity": 0.85, "marginLeft": "6px"}),
-                html.Span(f" · {when_local}", style={"float": "right", "fontSize": "12px", "opacity": 0.7}),
-                html.Br(),
-                html.A("details", href=link, target="_blank", style={"fontSize": "12px"}),
-            ],
-            style={"padding": "6px 0", "borderBottom": "1px dashed #ddd"},
-        )
+        link = it.get('@id') or it.get('id') or EA_FLOODS_URL
+        badge = html.Span(sev_txt, style={'background': chip, 'color': ('black' if chip==AMBER else 'white'),
+                                          'padding':'2px 6px','borderRadius':'6px','fontSize':'12px','marginRight':'8px'})
+        row = html.Div([
+            badge, html.Span(area, style={'fontWeight':'600'}),
+            html.Span(f" — {msg}", style={'opacity':0.85, 'marginLeft':'6px'}),
+            html.Span(f" · {when_local}", style={'float':'right','fontSize':'12px','opacity':0.7}),
+            html.Br(), html.A("details", href=link, target="_blank", style={'fontSize':'12px'})
+        ], style={'padding':'6px 0','borderBottom':'1px dashed #ddd'})
         out.append(row)
     return out
- 
- 
+
 def flatten_item(it):
-    fa = it.get("floodArea") or {}
+    fa = it.get('floodArea') or {}
     return {
         "severityLevel": it.get("severityLevel"),
         "severity": it.get("severity"),
@@ -892,297 +833,846 @@ def flatten_item(it):
         "timeSeverityChanged": it.get("timeSeverityChanged"),
         "timeUpdated": it.get("timeUpdated"),
         "timeRaised": it.get("timeRaised"),
-        "id": it.get("@id") or it.get("id") or "",
+        "id": it.get("@id") or it.get("id") or ""
     }
- 
- 
+
 def kpi_badge(title, value, color):
-    return html.Div(
-        [
-            html.Div(title, style={"fontSize": "12px", "opacity": 0.7}),
-            html.Div(str(value), style={"fontSize": "24px", "fontWeight": "700"}),
-        ],
-        style={
-            "flex": "1",
-            "background": color,
-            "color": ("black" if color == AMBER else "white"),
-            "padding": "12px 14px",
-            "borderRadius": "8px",
-            "textAlign": "center",
-        },
-    )
- 
- 
-@lru_cache(maxsize=1)
-def initial_map_html() -> str:
-    return build_map().get_root().render()
- 
- 
-# ============================================================
-# Module-level layout (required by Dash Pages)
-# ============================================================
-layout = html.Div(
-    [
-        html.H1("EV Chargers – West Midlands (Flood Zones, EA Live Areas, & Risk-Clustering)", style={"textAlign": "center"}),
-        html.Div(style={"height": "6px"}),
- 
-        html.Div(
-            [
-                html.Label(
-                    [
-                        html.Span(
-                            "Filter EA Flood Severity (live polygons): ℹ️",
-                            title=(
-                                "Severe flood warning (1) · Flood warning (2) · Flood alert (3) · Warning no longer in force (4)\n"
-                                "Colours use RAG: 1–2 Red, 3 Amber, 4 Green."
-                            ),
-                            style={"textDecoration": "underline", "cursor": "help"},
-                        )
-                    ]
-                ),
-                dcc.Checklist(
-                    id="flood-severity",
-                    options=[{"label": f"{v} ({k})", "value": k} for k, v in SEVERITY_LABEL.items()],
-                    value=[1, 2, 3],
-                    inline=True,
-                ),
-                dcc.Interval(id="ea-poll", interval=600_000, n_intervals=0),
-            ],
-            style={"marginBottom": "10px"},
+    return html.Div([
+        html.Div(title, style={'fontSize':'12px','opacity':0.7}),
+        html.Div(str(value), style={'fontSize':'24px','fontWeight':'700'})
+    ], style={'flex':'1', 'background':color, 'color':('black' if color==AMBER else 'white'),
+              'padding':'12px 14px','borderRadius':'8px','textAlign':'center'})
+
+# =========================
+# Initial map HTML + Dash app
+# =========================
+MAP_HTML = "ons_ev_map_west_midlands.html"
+build_map().save(MAP_HTML)
+
+app = dash.Dash(__name__)
+with open(MAP_HTML, "r", encoding="utf-8") as f:
+    map_html = f.read()
+
+app.layout = html.Div([
+    html.H1("EV Chargers – West Midlands (Flood Zones, EA Live Areas, & Risk-Clustering)", style={'textAlign': 'center'}),
+    html.Div(style={'height':'6px'}),
+
+    # Controls
+    html.Div([
+        html.Label([
+            html.Span(
+                "Filter EA Flood Severity (live polygons): ℹ️",
+                title=("Severe flood warning (1) · Flood warning (2) · Flood alert (3) · Warning no longer in force (4)\n"
+                       "Colours use RAG: 1–2 Red, 3 Amber, 4 Green."),
+                style={'textDecoration': 'underline', 'cursor': 'help'}
+            )
+        ]),
+        dcc.Checklist(
+            id='flood-severity',
+            options=[{'label': f"{v} ({k})", 'value': k} for k, v in SEVERITY_LABEL.items()],
+            value=[1, 2, 3], inline=True
         ),
- 
-        html.Div(
-            [
-                html.Div(id="kpi-sev1"),
-                html.Div(id="kpi-sev2"),
-                html.Div(id="kpi-sev3"),
-                html.Div(id="kpi-sev4"),
-                html.Div(id="kpi-total"),
-            ],
-            style={"display": "flex", "gap": "10px", "margin": "8px 0"},
-        ),
- 
-        html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="850"),
- 
-        html.Div(
-            [
-                html.Div(
-                    [
-                        html.H2("Live EA Warnings UK"),
-                        html.Div(id="wm-last-update", style={"fontSize": "12px", "opacity": 0.7, "marginBottom": "6px"}),
-                        html.Div(
-                            id="wm-live-feed",
-                            style={
-                                "maxHeight": "280px",
-                                "overflowY": "auto",
-                                "border": "1px solid #ccc",
-                                "padding": "8px",
-                                "borderRadius": "6px",
-                                "background": "#fafafa",
-                            },
-                        ),
-                    ],
-                    style={"flex": "1"},
-                ),
-                html.Div(
-                    [
-                        html.H2("Live EA Flood Items (Table)"),
-                        dash_table.DataTable(
-                            id="ea-table",
-                            columns=[
-                                {"name": "severityLevel", "id": "severityLevel"},
-                                {"name": "severity", "id": "severity"},
-                                {"name": "area_label", "id": "area_label"},
-                                {"name": "area_notation", "id": "area_notation"},
-                                {"name": "area_riverOrSea", "id": "area_riverOrSea"},
-                                {"name": "message", "id": "message"},
-                                {"name": "timeSeverityChanged", "id": "timeSeverityChanged"},
-                                {"name": "timeUpdated", "id": "timeUpdated"},
-                                {"name": "timeRaised", "id": "timeRaised"},
-                                {"name": "id", "id": "id"},
-                            ],
-                            data=[],
-                            page_size=10,
-                            sort_action="native",
-                            filter_action="native",
-                            style_table={"maxHeight": "320px", "overflowY": "auto"},
-                            style_cell={"fontSize": "12px", "whiteSpace": "normal", "height": "auto"},
-                        ),
-                    ],
-                    style={"flex": "1", "marginLeft": "20px"},
-                ),
-            ],
-            style={"display": "flex", "gap": "20px", "marginTop": "16px"},
-        ),
- 
-        html.H2("Charger Installations Over Time (Stacked by Town)"),
-        html.Div(
-            [
-                html.Div(
-                    [
-                        html.Label("Status:"),
-                        dcc.Dropdown(
-                            id="status-filter",
-                            options=[{"label": s, "value": s} for s in sorted(west_midlands_gdf["Status"].dropna().unique())],
-                            multi=True,
-                        ),
-                    ],
-                    style={"width": "40%", "display": "inline-block"},
-                ),
-                html.Div(
-                    [
-                        html.Label("Payment Required:"),
-                        dcc.Dropdown(
-                            id="payment-filter",
-                            options=[{"label": p, "value": p} for p in sorted(west_midlands_gdf["PaymentRequired"].dropna().unique())],
-                            multi=True,
-                        ),
-                    ],
-                    style={"width": "40%", "display": "inline-block", "marginLeft": "5%"},
-                ),
-            ]
-        ),
-        dcc.Graph(id="time-series"),
- 
-        html.H2("Upload Polygon to Filter Chargers"),
-        dcc.Upload(id="upload-polygon", children=html.Button("Upload GeoJSON / FeatureCollection"), multiple=False),
-        html.Div(id="output-count"),
-    ]
-)
- 
- 
-# ============================================================
-# Callbacks (Dash Pages style: use @callback, not app.callback)
-# ============================================================
-@callback(
-    Output("wm-map", "srcDoc"),
-    Output("wm-live-feed", "children"),
-    Output("wm-last-update", "children"),
-    Output("kpi-sev1", "children"),
-    Output("kpi-sev2", "children"),
-    Output("kpi-sev3", "children"),
-    Output("kpi-sev4", "children"),
-    Output("kpi-total", "children"),
-    Output("ea-table", "data"),
-    Input("flood-severity", "value"),
-    Input("ea-poll", "n_intervals"),
+        dcc.Interval(id='ea-poll', interval=60_000, n_intervals=0)
+    ], style={'marginBottom': '10px'}),
+
+    # KPIs for live EA feed (outside the map)
+    html.Div([
+        html.Div(id='kpi-sev1'), html.Div(id='kpi-sev2'),
+        html.Div(id='kpi-sev3'), html.Div(id='kpi-sev4'),
+        html.Div(id='kpi-total')
+    ], style={'display':'flex','gap':'10px','margin':'8px 0'}),
+
+    # Map
+    html.Iframe(id='map', srcDoc=map_html, width='100%', height='650'),
+
+    # Live warning feed + table
+    html.Div([
+        html.Div([
+            html.H2("Live EA Warnings (UK)"),
+            html.Div(id='last-update', style={'fontSize': '12px', 'opacity': 0.7, 'marginBottom': '6px'}),
+            html.Div(id='live-feed',
+                     style={'maxHeight': '280px', 'overflowY': 'auto', 'border': '1px solid #ccc',
+                            'padding': '8px','borderRadius': '6px', 'background': '#fafafa'}),
+        ], style={'flex':'1'}),
+
+        html.Div([
+            html.H2("Live EA Flood Items (Table)"),
+            dash_table.DataTable(
+                id='ea-table',
+                columns=[
+                    {"name": "severityLevel", "id": "severityLevel"},
+                    {"name": "severity", "id": "severity"},
+                    {"name": "area_label", "id": "area_label"},
+                    {"name": "area_notation", "id": "area_notation"},
+                    {"name": "area_riverOrSea", "id": "area_riverOrSea"},
+                    {"name": "message", "id": "message"},
+                    {"name": "timeSeverityChanged", "id": "timeSeverityChanged"},
+                    {"name": "timeUpdated", "id": "timeUpdated"},
+                    {"name": "timeRaised", "id": "timeRaised"},
+                    {"name": "id", "id": "id"},
+                ],
+                data=[],
+                page_size=10,
+                sort_action="native",
+                filter_action="native",
+                style_table={'maxHeight':'320px','overflowY':'auto'},
+                style_cell={'fontSize':'12px','whiteSpace':'normal','height':'auto'},
+            )
+        ], style={'flex':'1', 'marginLeft': '20px'})
+    ], style={'display':'flex','gap':'20px','marginTop':'16px'}),
+
+    html.H2("Charger Installations Over Time (Stacked by Town)"),
+    html.Div([
+        html.Div([
+            html.Label("Status:"),
+            dcc.Dropdown(
+                id='status-filter',
+                options=[{'label': s, 'value': s} for s in sorted(west_midlands_gdf['Status'].dropna().unique())],
+                multi=True
+            )
+        ], style={'width': '40%','display':'inline-block'}),
+        html.Div([
+            html.Label("Payment Required:"),
+            dcc.Dropdown(
+                id='payment-filter',
+                options=[{'label': p, 'value': p} for p in sorted(west_midlands_gdf['PaymentRequired'].dropna().unique())],
+                multi=True
+            )
+        ], style={'width': '40%', 'display': 'inline-block', 'marginLeft': '5%'})
+    ]),
+    dcc.Graph(id='time-series'),
+
+    html.H2("Upload Polygon to Filter Chargers"),
+    dcc.Upload(id='upload-polygon', children=html.Button("Upload GeoJSON / GeoJSON FeatureCollection"), multiple=False),
+    html.Div(id='output-count')
+])
+
+# =========================
+# Live refresh callback (map + KPIs + feed + table)
+# =========================
+@app.callback(
+    Output('map', 'srcDoc'),
+    Output('live-feed', 'children'),
+    Output('last-update', 'children'),
+    Output('kpi-sev1', 'children'),
+    Output('kpi-sev2', 'children'),
+    Output('kpi-sev3', 'children'),
+    Output('kpi-sev4', 'children'),
+    Output('kpi-total', 'children'),
+    Output('ea-table', 'data'),
+    Input('flood-severity', 'value'),
+    Input('ea-poll', 'n_intervals')
 )
 def refresh_live(severities, _n):
     floods = fetch_ea_floods()
     selected_severities = severities or []
-    floods_filtered = (
-        [f for f in floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) in selected_severities]
-        if selected_severities
-        else floods
-    )
- 
+    floods_filtered = [f for f in floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) in selected_severities] if selected_severities else floods
+
+    # Map: pass full floods for overlays; station colours are by Flood Zone via WFS unions
     m = build_map(selected_severities=selected_severities, floods=floods)
     map_html_str = m.get_root().render()
- 
+
+    # Feed
     feed_children = format_feed_items(floods_filtered)
     ts = datetime.now(ZoneInfo("Europe/London")).strftime("Last updated: %Y-%m-%d %H:%M %Z")
- 
-    def count_lvl(k):
-        return sum(1 for f in floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == k)
- 
+
+    # KPIs
+    def count_lvl(k): return sum(1 for f in floods if str(f.get('severityLevel','')).isdigit() and int(f['severityLevel']) == k)
     k1 = kpi_badge("Severe (1)", count_lvl(1), RED)
     k2 = kpi_badge("Warning (2)", count_lvl(2), RED)
     k3 = kpi_badge("Alert (3)", count_lvl(3), AMBER)
     k4 = kpi_badge("No longer in force (4)", count_lvl(4), GREEN)
     kt = kpi_badge("Total active", len(floods), "#283593")
- 
+
+    # Table (flatten)
     table_rows = [flatten_item(it) for it in floods_filtered]
+
     return map_html_str, feed_children, ts, k1, k2, k3, k4, kt, table_rows
- 
- 
+
+# =========================
+# Polygon filter callback
+# =========================
 def _extract_polygon(geojson_obj):
     if not isinstance(geojson_obj, dict):
-        raise ValueError("Invalid GeoJSON content.")
-    if geojson_obj.get("type") == "FeatureCollection":
-        geoms = [
-            shape(f["geometry"])
-            for f in geojson_obj.get("features", [])
-            if f.get("geometry") and f["geometry"].get("type") in {"Polygon", "MultiPolygon"}
-        ]
+        raise ValueError('Invalid GeoJSON content.')
+    if geojson_obj.get('type') == 'FeatureCollection':
+        geoms = [shape(f['geometry']) for f in geojson_obj.get('features', [])
+                 if f.get('geometry') and f['geometry'].get('type') in {'Polygon','MultiPolygon'}]
         if not geoms:
-            raise ValueError("No Polygon/MultiPolygon found in FeatureCollection.")
+            raise ValueError('No Polygon/MultiPolygon found in FeatureCollection.')
         return unary_union(geoms)
-    if geojson_obj.get("type") == "Feature":
-        geom = geojson_obj.get("geometry")
-        if not geom or geom.get("type") not in {"Polygon", "MultiPolygon"}:
-            raise ValueError("Feature geometry is not a Polygon/MultiPolygon.")
+    if geojson_obj.get('type') == 'Feature':
+        geom = geojson_obj.get('geometry')
+        if not geom or geom.get('type') not in {'Polygon','MultiPolygon'}:
+            raise ValueError('Feature geometry is not a Polygon/MultiPolygon.')
         return shape(geom)
-    if geojson_obj.get("type") in {"Polygon", "MultiPolygon"}:
+    if geojson_obj.get('type') in {'Polygon','MultiPolygon'}:
         return shape(geojson_obj)
-    raise ValueError("Unsupported GeoJSON type for polygon extraction.")
- 
- 
-@callback(
-    Output("output-count", "children"),
-    Input("upload-polygon", "contents"),
-    State("upload-polygon", "filename"),
+    raise ValueError('Unsupported GeoJSON type for polygon extraction.')
+
+@app.callback(
+    Output('output-count', 'children'),
+    Input('upload-polygon', 'contents'),
+    State('upload-polygon', 'filename')
 )
 def filter_polygon(contents, filename):
     if contents:
         try:
-            content_string = contents.split(",")[1]
+            content_string = contents.split(',')[1]
             decoded = base64.b64decode(content_string)
-            geojson_obj = json.load(io.StringIO(decoded.decode("utf-8")))
+            geojson_obj = json.load(io.StringIO(decoded.decode('utf-8')))
             poly_shape = _extract_polygon(geojson_obj)
- 
             mask = west_midlands_gdf.geometry.within(poly_shape)
             selected = west_midlands_gdf[mask]
-            preview = selected[["Town", "Latitude", "Longitude"]].head(10).to_string(index=False)
+            preview = selected[['Town','Latitude','Longitude']].head(10).to_string(index=False)
             return html.Div([html.P(f"{len(selected)} charging points in selected polygon."), html.Pre(preview)])
         except Exception as e:
-            return html.Div(
-                [
-                    html.P("Error reading GeoJSON. Ensure it is a Polygon/MultiPolygon, Feature, or FeatureCollection."),
-                    html.Pre(str(e)),
-                ]
-            )
+            return html.Div([html.P("Error reading GeoJSON. Ensure it is a Polygon/MultiPolygon, Feature, or FeatureCollection."),
+                             html.Pre(str(e))])
     return "Upload a valid polygon GeoJSON (.geojson or .json)."
- 
- 
-@callback(
-    Output("time-series", "figure"),
-    Input("status-filter", "value"),
-    Input("payment-filter", "value"),
+
+# =========================
+# Stacked bar chart callback
+# =========================
+@app.callback(
+    Output('time-series', 'figure'),
+    Input('status-filter', 'value'),
+    Input('payment-filter', 'value')
 )
 def update_time_series(statuses, payments):
     dff = west_midlands_gdf.copy()
     if statuses:
-        dff = dff[dff["Status"].isin(statuses)]
+        dff = dff[dff['Status'].isin(statuses)]
     if payments:
-        dff = dff[dff["PaymentRequired"].isin(payments)]
-    dff = dff.dropna(subset=["DateCreated"])
+        dff = dff[dff['PaymentRequired'].isin(payments)]
+    dff = dff.dropna(subset=['DateCreated'])
     if dff.empty:
-        return px.bar(title="New Chargers Over Time (Stacked)")
- 
-    dff["Month"] = dff["DateCreated"].dt.to_period("M").astype(str)
-    time_counts = dff.groupby(["Month", "Town"]).size().reset_index(name="Count")
- 
-    fig = px.bar(
-        time_counts,
-        x="Month",
-        y="Count",
-        color="Town",
-        title="New Chargers Over Time (Stacked by Town)",
-        barmode="stack",
-        color_discrete_sequence=px.colors.qualitative.Pastel,
-    )
-    fig.update_layout(xaxis_title="Month", yaxis_title="Charger Count", height=420, legend_title_text="Town")
+        return px.bar(title='New Chargers Over Time (Stacked)')
+    dff['Month'] = dff['DateCreated'].dt.to_period('M').astype(str)
+    time_counts = dff.groupby(['Month', 'Town']).size().reset_index(name='Count')
+    fig = px.bar(time_counts, x='Month', y='Count', color='Town',
+                 title='New Chargers Over Time (Stacked by Town)',
+                 barmode='stack', color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig.update_layout(xaxis_title='Month', yaxis_title='Charger Count', height=420, legend_title_text='Town')
     return fig
- 
- 
-# ============================================================
-# Optional standalone run for debugging this page alone
-# ============================================================
+
 if __name__ == "__main__":
-    from dash import Dash
+    app.run(debug=True)
+
  
-    app = Dash(__name__)
-    app.layout = layout
-    app.run_server(debug=True, port=8051)
+# def _ensure_fz_unions():
+#     global FZ2_UNION_PREP, FZ3_UNION_PREP
+#     if FZ2_UNION_PREP is None:
+#         FZ2_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ2, ["zone", "flood", "2"], WM_BBOX)
+#     if FZ3_UNION_PREP is None:
+#         FZ3_UNION_PREP = _wfs_fetch_polys_union_prepared(WFS_FZ3, ["zone", "flood", "3"], WM_BBOX)
+ 
+ 
+# # =========================
+# # Map builder
+# # =========================
+# def build_map(selected_severities=None, floods=None):
+#     m = folium.Map(location=[52.4862, -1.8904], zoom_start=10, tiles=None)
+ 
+#     BASEMAPS = {
+#         "OSM Standard": ("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", "© OpenStreetMap contributors"),
+#         "CARTO Positron": ("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", "© OpenStreetMap, © CARTO"),
+#         "CARTO Dark Matter": ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", "© OpenStreetMap, © CARTO"),
+#         "Esri World Imagery (satellite)": ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", "Tiles © Esri"),
+#         "Esri World Gray Canvas": ("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", "Tiles © Esri"),
+#     }
+ 
+#     for name, (tiles, attr) in BASEMAPS.items():
+#         folium.TileLayer(
+#             tiles=tiles,
+#             attr=attr,
+#             name=name,
+#             control=True,
+#             show=(name == "Esri World Imagery (satellite)"),
+#         ).add_to(m)
+ 
+#     # --- OSM Water overlay ---
+#     water_fg = folium.FeatureGroup(
+#     name="OSM Water (lakes/riverbanks)", show=True)
+#     global WATER_CACHE
+#     if WATER_CACHE is None:
+#         WATER_CACHE = fetch_osm_water_polys(WM_BBOX)
+#     if WATER_CACHE:
+#         water_fg = folium.FeatureGroup(name="OSM Water (lakes/riverbanks)", show=True)
+#         WATER_STYLE = dict(fillColor="#1565C0", color="#0D47A1", weight=1.0, fillOpacity=0.55)
+#         for geom in WATER_CACHE:
+#             try:
+#                 folium.GeoJson(data=mapping(geom), style_function=lambda _f, s=WATER_STYLE: s).add_to(water_fg)
+#             except Exception:
+#                 continue
+#         water_fg.add_to(m)
+ 
+#     # --- EA WMS overlays ---
+#     add_ea_wms(m, WMS_FZ2, keywords=["zone", "flood", "2"], layer_label="Flood Zone 2 (undefended)", show=False)
+#     add_ea_wms(m, WMS_FZ3, keywords=["zone", "flood", "3"], layer_label="Flood Zone 3 (undefended)", show=False)
+#     add_ea_wms(m, WMS_RoFRS, keywords=["risk", "river", "sea"], layer_label="Risk of Flooding (Rivers & Sea)", show=True, opacity=0.5)
+#     add_ea_wms(m, WMS_FloodWarnings, keywords=["flood", "warning", "area"], layer_label="Flood Warning Areas", show=False)
+ 
+#     # --- Live EA Flood Risk Areas overlay ---
+#     raw_floods = floods if floods is not None else fetch_ea_floods()
+#     if selected_severities:
+#         floods_for_polys = [
+#             f
+#             for f in raw_floods
+#             if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) in selected_severities
+#         ]
+#     else:
+#         floods_for_polys = raw_floods
+ 
+#     areas_fg = folium.FeatureGroup(name="EA Flood Risk Areas (live)", show=True)
+ 
+#     for it in floods_for_polys:
+#         try:
+#             sev = int(it.get("severityLevel", 0) or 0)
+#         except Exception:
+#             continue
+#         if sev not in SEVERITY_LABEL:
+#             continue
+ 
+#         fa = it.get("floodArea") or {}
+#         geom = None
+ 
+#         poly_wkt = fa.get("polygon")
+#         if poly_wkt:
+#             try:
+#                 geom = shapely_wkt.loads(poly_wkt)
+#             except Exception:
+#                 geom = None
+ 
+#         if geom is None:
+#             key = fa.get("notation") or fa.get("id") or fa.get("code")
+#             area = EA_AREAS_CACHE.get(key)
+#             if area:
+#                 geom = area["geometry"]
+ 
+#         if geom is None:
+#             continue
+ 
+#         try:
+#             geom = geom.intersection(WM_BBOX)
+#             if geom.is_empty:
+#                 continue
+#         except Exception:
+#             continue
+ 
+#         rag_colour = _sev_to_rag(sev)
+#         feature = {
+#             "type": "Feature",
+#             "properties": {
+#                 "severity": SEVERITY_LABEL[sev],
+#                 "label": fa.get("label") or fa.get("eaAreaName") or "",
+#                 "river": fa.get("riverOrSea") or "",
+#                 "rag": rag_colour,
+#             },
+#             "geometry": mapping(geom),
+#         }
+ 
+#         folium.GeoJson(
+#             data=feature,
+#             name=f"EA {SEVERITY_LABEL[sev]}",
+#             style_function=lambda f: {
+#                 "fillColor": f["properties"]["rag"],
+#                 "color": f["properties"]["rag"],
+#                 "weight": 0.8,
+#                 "fillOpacity": 0.35,
+#             },
+#             highlight_function=lambda _f: {"weight": 2.0, "fillOpacity": 0.55},
+#             tooltip=folium.GeoJsonTooltip(
+#                 fields=["label", "severity", "river"],
+#                 aliases=["Area", "Severity", "River/Sea"],
+#                 sticky=True,
+#             ),
+#         ).add_to(areas_fg)
+ 
+#     areas_fg.add_to(m)
+ 
+#     # --- Flood Zone-based classification for chargers (FZ3 -> FZ2 -> Outside) ---
+#     _ensure_fz_unions()
+ 
+#     def fz_class(row):
+#         pt = row.geometry
+#         if FZ3_UNION_PREP and FZ3_UNION_PREP.contains(pt):
+#             return ("Flood Zone 3 (undefended)", RED)
+#         if FZ2_UNION_PREP and FZ2_UNION_PREP.contains(pt):
+#             return ("Flood Zone 2 (undefended)", AMBER)
+#         return ("Outside FZ2/FZ3", GREEN)
+ 
+#     classes = west_midlands_gdf.apply(fz_class, axis=1, result_type="expand")
+#     west_midlands_gdf["RiskLabel"] = classes[0]
+#     west_midlands_gdf["RiskColor"] = classes[1]
+ 
+#     red_group = folium.FeatureGroup(name="Chargers: Flood Zone 3 (red)", show=True)
+#     amber_group = folium.FeatureGroup(name="Chargers: Flood Zone 2 (amber)", show=True)
+#     safe_group = folium.FeatureGroup(name="Chargers: Outside FZ2/FZ3 (green)", show=True)
+ 
+#     red_cluster = MarkerCluster(name="Cluster: FZ3").add_to(red_group)
+#     amber_cluster = MarkerCluster(name="Cluster: FZ2").add_to(amber_group)
+#     safe_cluster = MarkerCluster(name="Cluster: Outside").add_to(safe_group)
+ 
+#     def make_icon(color_hex):
+#         border = {RED: "#B71C1C", AMBER: "#FF8F00", GREEN: "#1B5E20"}.get(color_hex, "#1B5E20")
+#         return BeautifyIcon(
+#             icon="bolt",
+#             icon_shape="marker",
+#             background_color=color_hex,
+#             border_color=border,
+#             border_width=3,
+#             text_color="white",
+#             inner_icon_style="font-size:22px;padding-top:2px;",
+#         )
+ 
+#     for _, row in west_midlands_gdf.iterrows():
+#         label = row["RiskLabel"]
+#         color = row["RiskColor"]
+#         popup_html = (
+#             f"<b>Town/City:</b> {row['Town']}<br>"
+#             f"<b>Postcode:</b> {row['Postcode']}<br>"
+#             f"<b>Status:</b> {row['Status']}<br>"
+#             f"<b>Operator:</b> {row['Operator']}<br>"
+#             f"<b>Zone:</b> {label}"
+#         )
+ 
+#         marker = folium.Marker(
+#             location=[row["Latitude"], row["Longitude"]],
+#             icon=make_icon(color),
+#             popup=folium.Popup(popup_html, max_width=420),
+#             tooltip=f"{row['Town']} • {row['Postcode']} • {label}",
+#         )
+ 
+#         if color == RED:
+#             red_cluster.add_child(marker)
+#         elif color == AMBER:
+#             amber_cluster.add_child(marker)
+#         else:
+#             safe_cluster.add_child(marker)
+ 
+#     red_group.add_to(m)
+#     amber_group.add_to(m)
+#     safe_group.add_to(m)
+ 
+#     Draw(export=True).add_to(m)
+#     folium.LayerControl(collapsed=False).add_to(m)
+ 
+#     # --- Top-left KPI blocks (live counts) ---
+#     count_sev1 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 1)
+#     count_sev2 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 2)
+#     count_sev3 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 3)
+#     count_sev4 = sum(1 for f in raw_floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == 4)
+#     count_red = count_sev1 + count_sev2
+ 
+#     alert_panel = f"""
+#     <div style="position: fixed; top: 12px; left: 12px; z-index: 9999; display:flex; gap:8px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;">
+#       <div style="background:{RED}; color:white; padding:6px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.25);">
+#         <div style="font-size:12px;opacity:.9;">Warning/Severe</div>
+#         <div style="font-size:18px;font-weight:700;line-height:1;">{count_red}</div>
+#       </div>
+#       <div style="background:{AMBER}; color:black; padding:6px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.25);">
+#         <div style="font-size:12px;opacity:.9;">Alerts</div>
+#         <div style="font-size:18px;font-weight:700;line-height:1;">{count_sev3}</div>
+#       </div>
+#       <div style="background:{GREEN}; color:white; padding:6px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.25);">
+#         <div style="font-size:12px;opacity:.9;">No longer in force</div>
+#         <div style="font-size:18px;font-weight:700;line-height:1;">{count_sev4}</div>
+#       </div>
+#     </div>"""
+#     m.get_root().html.add_child(folium.Element(alert_panel))
+ 
+#     # --- Legends ---
+#     rag_legend = f"""
+#     <div style="position: fixed; bottom: 120px; left: 20px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-size: 13px;">
+#       <b>EA Flood Areas (RAG)</b><br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{RED};margin-right:6px;border:1px solid #555;"></span> Warning/Severe (1–2)<br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{AMBER};margin-right:6px;border:1px solid #555;"></span> Alert (3)<br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{GREEN};margin-right:6px;border:1px solid #555;"></span> No longer in force (4)
+#     </div>"""
+#     m.get_root().html.add_child(folium.Element(rag_legend))
+ 
+#     chargers_legend = f"""
+#     <div style="position: fixed; bottom: 20px; left: 20px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-size: 13px;">
+#       <b>Chargers by Flood Zone (undefended)</b><br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{RED};margin-right:6px;border:1px solid #555;"></span> Flood Zone 3<br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{AMBER};margin-right:6px;border:1px solid #555;"></span> Flood Zone 2<br>
+#       <span style="display:inline-block;width:12px;height:12px;background:{GREEN};margin-right:6px;border:1px solid #555;"></span> Outside FZ2/FZ3
+#     </div>"""
+#     m.get_root().html.add_child(folium.Element(chargers_legend))
+ 
+#     return m
+ 
+ 
+# # =========================
+# # Live feed + table helpers
+# # =========================
+# def parse_iso(ts: str):
+#     if not ts:
+#         return None
+#     try:
+#         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+#     except Exception:
+#         return None
+ 
+ 
+# def format_feed_items(floods, tz="Europe/London", limit=50):
+#     def best_time(it):
+#         return (
+#             parse_iso(it.get("timeSeverityChanged"))
+#             or parse_iso(it.get("timeMessageChanged"))
+#             or parse_iso(it.get("timeRaised"))
+#             or parse_iso(it.get("timeUpdated"))
+#             or datetime.now(timezone.utc)
+#         )
+ 
+#     floods_sorted = sorted(floods, key=lambda it: (int(it.get("severityLevel", 9) or 9), best_time(it)))
+#     out = []
+#     for it in floods_sorted[:limit]:
+#         sev = int(it.get("severityLevel", 0) or 0)
+#         sev_txt = SEVERITY_LABEL.get(sev, f"Unknown ({sev})")
+#         chip = _sev_to_rag(sev)
+#         fa = it.get("floodArea", {}) or {}
+#         area = fa.get("label") or fa.get("eaAreaName") or fa.get("description") or fa.get("riverOrSea") or "Area"
+#         msg = it.get("message") or it.get("description") or it.get("severity") or ""
+#         when = (
+#             parse_iso(it.get("timeSeverityChanged"))
+#             or parse_iso(it.get("timeMessageChanged"))
+#             or parse_iso(it.get("timeRaised"))
+#             or parse_iso(it.get("timeUpdated"))
+#         )
+#         when_local = when.astimezone(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M") if when else "—"
+#         link = it.get("@id") or it.get("id") or EA_FLOODS_URL
+ 
+#         badge = html.Span(
+#             sev_txt,
+#             style={
+#                 "background": chip,
+#                 "color": ("black" if chip == AMBER else "white"),
+#                 "padding": "2px 6px",
+#                 "borderRadius": "6px",
+#                 "fontSize": "12px",
+#                 "marginRight": "8px",
+#             },
+#         )
+#         row = html.Div(
+#             [
+#                 badge,
+#                 html.Span(area, style={"fontWeight": "600"}),
+#                 html.Span(f" — {msg}", style={"opacity": 0.85, "marginLeft": "6px"}),
+#                 html.Span(f" · {when_local}", style={"float": "right", "fontSize": "12px", "opacity": 0.7}),
+#                 html.Br(),
+#                 html.A("details", href=link, target="_blank", style={"fontSize": "12px"}),
+#             ],
+#             style={"padding": "6px 0", "borderBottom": "1px dashed #ddd"},
+#         )
+#         out.append(row)
+#     return out
+ 
+ 
+# def flatten_item(it):
+#     fa = it.get("floodArea") or {}
+#     return {
+#         "severityLevel": it.get("severityLevel"),
+#         "severity": it.get("severity"),
+#         "area_label": fa.get("label") or fa.get("eaAreaName") or "",
+#         "area_notation": fa.get("notation") or "",
+#         "area_riverOrSea": fa.get("riverOrSea") or "",
+#         "message": (it.get("message") or it.get("description") or "")[:280],
+#         "timeSeverityChanged": it.get("timeSeverityChanged"),
+#         "timeUpdated": it.get("timeUpdated"),
+#         "timeRaised": it.get("timeRaised"),
+#         "id": it.get("@id") or it.get("id") or "",
+#     }
+ 
+ 
+# def kpi_badge(title, value, color):
+#     return html.Div(
+#         [
+#             html.Div(title, style={"fontSize": "12px", "opacity": 0.7}),
+#             html.Div(str(value), style={"fontSize": "24px", "fontWeight": "700"}),
+#         ],
+#         style={
+#             "flex": "1",
+#             "background": color,
+#             "color": ("black" if color == AMBER else "white"),
+#             "padding": "12px 14px",
+#             "borderRadius": "8px",
+#             "textAlign": "center",
+#         },
+#     )
+ 
+ 
+# @lru_cache(maxsize=1)
+# def initial_map_html() -> str:
+#     return build_map().get_root().render()
+ 
+ 
+# # ============================================================
+# # Module-level layout (required by Dash Pages)
+# # ============================================================
+# layout = html.Div(
+#     [
+#         html.H1("EV Chargers – West Midlands (Flood Zones, EA Live Areas, & Risk-Clustering)", style={"textAlign": "center"}),
+#         html.Div(style={"height": "6px"}),
+ 
+#         html.Div(
+#             [
+#                 html.Label(
+#                     [
+#                         html.Span(
+#                             "Filter EA Flood Severity (live polygons): ℹ️",
+#                             title=(
+#                                 "Severe flood warning (1) · Flood warning (2) · Flood alert (3) · Warning no longer in force (4)\n"
+#                                 "Colours use RAG: 1–2 Red, 3 Amber, 4 Green."
+#                             ),
+#                             style={"textDecoration": "underline", "cursor": "help"},
+#                         )
+#                     ]
+#                 ),
+#                 dcc.Checklist(
+#                     id="flood-severity",
+#                     options=[{"label": f"{v} ({k})", "value": k} for k, v in SEVERITY_LABEL.items()],
+#                     value=[1, 2, 3],
+#                     inline=True,
+#                 ),
+#                 dcc.Interval(id="ea-poll", interval=600_000, n_intervals=0),
+#             ],
+#             style={"marginBottom": "10px"},
+#         ),
+ 
+#         html.Div(
+#             [
+#                 html.Div(id="kpi-sev1"),
+#                 html.Div(id="kpi-sev2"),
+#                 html.Div(id="kpi-sev3"),
+#                 html.Div(id="kpi-sev4"),
+#                 html.Div(id="kpi-total"),
+#             ],
+#             style={"display": "flex", "gap": "10px", "margin": "8px 0"},
+#         ),
+ 
+#         html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="850"),
+ 
+#         html.Div(
+#             [
+#                 html.Div(
+#                     [
+#                         html.H2("Live EA Warnings UK"),
+#                         html.Div(id="wm-last-update", style={"fontSize": "12px", "opacity": 0.7, "marginBottom": "6px"}),
+#                         html.Div(
+#                             id="wm-live-feed",
+#                             style={
+#                                 "maxHeight": "280px",
+#                                 "overflowY": "auto",
+#                                 "border": "1px solid #ccc",
+#                                 "padding": "8px",
+#                                 "borderRadius": "6px",
+#                                 "background": "#fafafa",
+#                             },
+#                         ),
+#                     ],
+#                     style={"flex": "1"},
+#                 ),
+#                 html.Div(
+#                     [
+#                         html.H2("Live EA Flood Items (Table)"),
+#                         dash_table.DataTable(
+#                             id="ea-table",
+#                             columns=[
+#                                 {"name": "severityLevel", "id": "severityLevel"},
+#                                 {"name": "severity", "id": "severity"},
+#                                 {"name": "area_label", "id": "area_label"},
+#                                 {"name": "area_notation", "id": "area_notation"},
+#                                 {"name": "area_riverOrSea", "id": "area_riverOrSea"},
+#                                 {"name": "message", "id": "message"},
+#                                 {"name": "timeSeverityChanged", "id": "timeSeverityChanged"},
+#                                 {"name": "timeUpdated", "id": "timeUpdated"},
+#                                 {"name": "timeRaised", "id": "timeRaised"},
+#                                 {"name": "id", "id": "id"},
+#                             ],
+#                             data=[],
+#                             page_size=10,
+#                             sort_action="native",
+#                             filter_action="native",
+#                             style_table={"maxHeight": "320px", "overflowY": "auto"},
+#                             style_cell={"fontSize": "12px", "whiteSpace": "normal", "height": "auto"},
+#                         ),
+#                     ],
+#                     style={"flex": "1", "marginLeft": "20px"},
+#                 ),
+#             ],
+#             style={"display": "flex", "gap": "20px", "marginTop": "16px"},
+#         ),
+ 
+#         html.H2("Charger Installations Over Time (Stacked by Town)"),
+#         html.Div(
+#             [
+#                 html.Div(
+#                     [
+#                         html.Label("Status:"),
+#                         dcc.Dropdown(
+#                             id="status-filter",
+#                             options=[{"label": s, "value": s} for s in sorted(west_midlands_gdf["Status"].dropna().unique())],
+#                             multi=True,
+#                         ),
+#                     ],
+#                     style={"width": "40%", "display": "inline-block"},
+#                 ),
+#                 html.Div(
+#                     [
+#                         html.Label("Payment Required:"),
+#                         dcc.Dropdown(
+#                             id="payment-filter",
+#                             options=[{"label": p, "value": p} for p in sorted(west_midlands_gdf["PaymentRequired"].dropna().unique())],
+#                             multi=True,
+#                         ),
+#                     ],
+#                     style={"width": "40%", "display": "inline-block", "marginLeft": "5%"},
+#                 ),
+#             ]
+#         ),
+#         dcc.Graph(id="time-series"),
+ 
+#         html.H2("Upload Polygon to Filter Chargers"),
+#         dcc.Upload(id="upload-polygon", children=html.Button("Upload GeoJSON / FeatureCollection"), multiple=False),
+#         html.Div(id="output-count"),
+#     ]
+# )
+ 
+ 
+# # ============================================================
+# # Callbacks (Dash Pages style: use @callback, not app.callback)
+# # ============================================================
+# @callback(
+#     Output("wm-map", "srcDoc"),
+#     Output("wm-live-feed", "children"),
+#     Output("wm-last-update", "children"),
+#     Output("kpi-sev1", "children"),
+#     Output("kpi-sev2", "children"),
+#     Output("kpi-sev3", "children"),
+#     Output("kpi-sev4", "children"),
+#     Output("kpi-total", "children"),
+#     Output("ea-table", "data"),
+#     Input("flood-severity", "value"),
+#     Input("ea-poll", "n_intervals"),
+# )
+# def refresh_live(severities, _n):
+#     floods = fetch_ea_floods()
+#     selected_severities = severities or []
+#     floods_filtered = (
+#         [f for f in floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) in selected_severities]
+#         if selected_severities
+#         else floods
+#     )
+ 
+#     m = build_map(selected_severities=selected_severities, floods=floods)
+#     map_html_str = m.get_root().render()
+ 
+#     feed_children = format_feed_items(floods_filtered)
+#     ts = datetime.now(ZoneInfo("Europe/London")).strftime("Last updated: %Y-%m-%d %H:%M %Z")
+ 
+#     def count_lvl(k):
+#         return sum(1 for f in floods if str(f.get("severityLevel", "")).isdigit() and int(f["severityLevel"]) == k)
+ 
+#     k1 = kpi_badge("Severe (1)", count_lvl(1), RED)
+#     k2 = kpi_badge("Warning (2)", count_lvl(2), RED)
+#     k3 = kpi_badge("Alert (3)", count_lvl(3), AMBER)
+#     k4 = kpi_badge("No longer in force (4)", count_lvl(4), GREEN)
+#     kt = kpi_badge("Total active", len(floods), "#283593")
+ 
+#     table_rows = [flatten_item(it) for it in floods_filtered]
+#     return map_html_str, feed_children, ts, k1, k2, k3, k4, kt, table_rows
+ 
+ 
+# def _extract_polygon(geojson_obj):
+#     if not isinstance(geojson_obj, dict):
+#         raise ValueError("Invalid GeoJSON content.")
+#     if geojson_obj.get("type") == "FeatureCollection":
+#         geoms = [
+#             shape(f["geometry"])
+#             for f in geojson_obj.get("features", [])
+#             if f.get("geometry") and f["geometry"].get("type") in {"Polygon", "MultiPolygon"}
+#         ]
+#         if not geoms:
+#             raise ValueError("No Polygon/MultiPolygon found in FeatureCollection.")
+#         return unary_union(geoms)
+#     if geojson_obj.get("type") == "Feature":
+#         geom = geojson_obj.get("geometry")
+#         if not geom or geom.get("type") not in {"Polygon", "MultiPolygon"}:
+#             raise ValueError("Feature geometry is not a Polygon/MultiPolygon.")
+#         return shape(geom)
+#     if geojson_obj.get("type") in {"Polygon", "MultiPolygon"}:
+#         return shape(geojson_obj)
+#     raise ValueError("Unsupported GeoJSON type for polygon extraction.")
+ 
+ 
+# @callback(
+#     Output("output-count", "children"),
+#     Input("upload-polygon", "contents"),
+#     State("upload-polygon", "filename"),
+# )
+# def filter_polygon(contents, filename):
+#     if contents:
+#         try:
+#             content_string = contents.split(",")[1]
+#             decoded = base64.b64decode(content_string)
+#             geojson_obj = json.load(io.StringIO(decoded.decode("utf-8")))
+#             poly_shape = _extract_polygon(geojson_obj)
+ 
+#             mask = west_midlands_gdf.geometry.within(poly_shape)
+#             selected = west_midlands_gdf[mask]
+#             preview = selected[["Town", "Latitude", "Longitude"]].head(10).to_string(index=False)
+#             return html.Div([html.P(f"{len(selected)} charging points in selected polygon."), html.Pre(preview)])
+#         except Exception as e:
+#             return html.Div(
+#                 [
+#                     html.P("Error reading GeoJSON. Ensure it is a Polygon/MultiPolygon, Feature, or FeatureCollection."),
+#                     html.Pre(str(e)),
+#                 ]
+#             )
+#     return "Upload a valid polygon GeoJSON (.geojson or .json)."
+ 
+ 
+# @callback(
+#     Output("time-series", "figure"),
+#     Input("status-filter", "value"),
+#     Input("payment-filter", "value"),
+# )
+# def update_time_series(statuses, payments):
+#     dff = west_midlands_gdf.copy()
+#     if statuses:
+#         dff = dff[dff["Status"].isin(statuses)]
+#     if payments:
+#         dff = dff[dff["PaymentRequired"].isin(payments)]
+#     dff = dff.dropna(subset=["DateCreated"])
+#     if dff.empty:
+#         return px.bar(title="New Chargers Over Time (Stacked)")
+ 
+#     dff["Month"] = dff["DateCreated"].dt.to_period("M").astype(str)
+#     time_counts = dff.groupby(["Month", "Town"]).size().reset_index(name="Count")
+ 
+#     fig = px.bar(
+#         time_counts,
+#         x="Month",
+#         y="Count",
+#         color="Town",
+#         title="New Chargers Over Time (Stacked by Town)",
+#         barmode="stack",
+#         color_discrete_sequence=px.colors.qualitative.Pastel,
+#     )
+#     fig.update_layout(xaxis_title="Month", yaxis_title="Charger Count", height=420, legend_title_text="Town")
+#     return fig
+ 
+ 
+# # ============================================================
+# # Optional standalone run for debugging this page alone
+# # ============================================================
+# if __name__ == "__main__":
+#     from dash import Dash
+ 
+#     app = Dash(__name__)
+#     app.layout = layout
+#     app.run_server(debug=True, port=8051)
  
  

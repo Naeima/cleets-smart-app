@@ -1,0 +1,7 @@
+services:
+  cleets-smart:
+    build: .
+    container_name: cleets-smart
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
