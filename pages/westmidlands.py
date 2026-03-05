@@ -892,7 +892,7 @@ layout = html.Div(
             style={"display": "flex", "gap": "10px", "margin": "8px 0"},
         ),
  
-        html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="850"),
+        html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="1050"),
  
         html.Div(
             [
