@@ -202,7 +202,40 @@ layout = html.Div([
                     "border": "1px solid #cfe2f3",
                     "borderRadius": "12px",
                     "padding": "20px",
-                    "backgroundColor": "#eaf3fb",
+                    "backgroundColor": "#fbf5ea",
+                    "fontSize": "32px",
+                    "width": "30%",
+                    "minWidth": "350px",
+                    "textAlign": "center"
+                }
+            ),
+            # Card F
+            html.Div(
+                className="card",
+                children=[
+                    html.Img(
+                        src="/assets/SCOUT.png",
+                        style={
+                            "height": "300px",
+                            "width": "auto",
+                            "display": "block",
+                            "margin": "0 auto 20px auto",
+                            "objectFit": "contain"
+                        }
+                    ),
+                    html.A(
+                        "F) SCOUT",
+                        href="https://arcade.evl.uic.edu/scout/",
+                        target="_blank",
+                        style={"fontWeight": "bold", "textDecoration": "none"}
+                    ),
+                    html.P("An Open-Access Scenario-Oriented Urban Toolkit for Decision Support. By Kazi Omar and Dr Fabio Miranda")
+                ],
+                style={
+                    "border": "1px solid #cfe2f3",
+                    "borderRadius": "12px",
+                    "padding": "20px",
+                    "backgroundColor": "#eafbf8",
                     "fontSize": "32px",
                     "width": "30%",
                     "minWidth": "350px",
