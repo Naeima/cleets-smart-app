@@ -520,6 +520,8 @@ if df is None or df.empty:
     )
     country_OPTIONS: List[str] = []
 else:
+    df = df.copy()
+
     area_col = (
         "country"
         if "country" in df.columns
@@ -527,8 +529,12 @@ else:
     )
     df[area_col] = df[area_col].astype(str).str.strip().str.title()
 
-    df["Latitude"] = pd.to_numeric(df.get("latitude", df.get("Latitude")), errors="coerce")
-    df["Longitude"] = pd.to_numeric(df.get("longitude", df.get("Longitude")), errors="coerce")
+    lat_src = df["latitude"] if "latitude" in df.columns else df.get("Latitude")
+    lon_src = df["longitude"] if "longitude" in df.columns else df.get("Longitude")
+    df = df.assign(
+        Latitude=pd.to_numeric(lat_src, errors="coerce"),
+        Longitude=pd.to_numeric(lon_src, errors="coerce"),
+    )
     df = df.dropna(subset=["Latitude", "Longitude"]).copy()
 
     df["country"] = df[area_col].astype(str)
@@ -1342,9 +1348,12 @@ def render_map_html_route(
     end: Tuple[float, float],
     chargers: List[Dict[str, Any]],
     all_chargers_df: Optional[pd.DataFrame] = None,
-    animate: bool = False,
+    animate: bool = True,
     speed_kmh: float = 50,
-    show_live_backdrops: bool = False,
+    show_fraw: bool = True,
+    show_fmfp: bool = True,
+    show_live: bool = True,
+    show_ctx: bool = True,
 ):
     m = folium.Map(
         location=[(start[0] + end[0]) / 2, (start[1] + end[1]) / 2],
@@ -1437,7 +1446,13 @@ def render_map_html_route(
             icon=make_beautify_icon(color_hex),
         ).add_to(cluster)
 
-    if show_live_backdrops:
+    if show_fraw:
+        add_wms_group(m, FRAW_WMS, visible=True, opacity=0.60)
+    if show_fmfp:
+        add_wms_group(m, FMFP_WMS, visible=True, opacity=0.65)
+    if show_ctx:
+        add_wms_group(m, CONTEXT_WMS, visible=True, opacity=0.45)
+    if show_live:
         add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
 
     folium.LayerControl(collapsed=True).add_to(m)
@@ -1997,7 +2012,10 @@ def _update_map(
                     all_chargers_df=route_chargers,
                     animate=False,
                     speed_kmh=45,
-                    show_live_backdrops=False,
+                    show_fraw=show_fraw,
+                    show_fmfp=show_fmfp,
+                    show_live=show_live,
+                    show_ctx=show_ctx,
                 )
 
                 msg = [f"**Routing plan (fast/OSRM)** — {dist_m/1000.0:.1f} km • {dur_s/3600.0:.2f} h"]
@@ -2054,7 +2072,10 @@ def _update_map(
                     all_chargers_df=route_chargers,
                     animate=False,
                     speed_kmh=45,
-                    show_live_backdrops=False,
+                    show_fraw=show_fraw,
+                    show_fmfp=show_fmfp,
+                    show_live=show_live,
+                    show_ctx=show_ctx,
                 )
 
             stats = build_route_statistics(line, safe_lines, risk_lines, stops, total_cost, batt, kwhkm)
