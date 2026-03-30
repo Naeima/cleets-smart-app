@@ -47,6 +47,7 @@ layout = html.Div([
             "boxSizing": "border-box"
         },
         children=[
+
             # Card A
             html.Div(
                 className="card",
@@ -241,8 +242,41 @@ layout = html.Div([
                     "minWidth": "350px",
                     "textAlign": "center"
                 }
+            ),
+            # Card G
+            html.Div(
+                className="card",
+                children=[
+                    html.Img(
+                        src="/assets/team.png",
+                        style={
+                            "height": "350px",
+                            "width": "auto",
+                            "display": "block",
+                            "margin": "0 auto 20px auto",
+                            "objectFit": "contain"
+                        }
+                    ),
+                    html.A(
+                        " CLEETS-SMART is a product of the Data Science Team at CLEETS Global Centre. Contact: Dr Naeima Hamed (hamednh@cardiff.ac.uk; nhamed@illinois.edu)",
+                        href="https://cleets-global-center.org/",
+                        target="_blank",
+                        # style={"fontWeight": "bold", "textDecoration": "none"}
+                    ),
+                    # html.P("A weather dashboard built using the Open-Meteo API.")
+                ],
+                style={
+                    "border": "1px solid #cfe2f3",
+                    "borderRadius": "12px",
+                    "padding": "20px",
+                    "backgroundColor": "#e6f7f5",
+                    "fontSize": "32px",
+                    "width": "30%",
+                    "minWidth": "350px",
+                    "textAlign": "center"
+                }
             )
-
+            
         ]
     )
 ])
