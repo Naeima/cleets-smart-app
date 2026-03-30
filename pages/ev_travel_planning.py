@@ -14,6 +14,7 @@ import hashlib
 import gzip
 import zipfile
 import re
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -103,6 +104,30 @@ LOGO_CACHE_PATH = os.path.join(CACHE_DIR, "cleets_logo-01.png")
 
 OWS_BASE = "https://datamap.gov.wales/geoserver/ows"
 
+# Semantic aliases used by some WMS/WFS catalogues and legacy matching code.
+# NRW exposes canonical INSPIRE layer names; planning/risk classes are attributes,
+# not standalone layer names. The aliases below map those semantic requests onto
+# the canonical published layer(s).
+OWS_LAYER_ALIASES = {
+    # Planning flood zones are encoded as attributes inside the merged FMfP layer.
+    "Flood Zone 2 (undefended)": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
+    "Flood Zone 3 (undefended)": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
+    # NRW risk layers are published separately for rivers and sea.
+    "Risk of Flooding (Rivers & Sea)": [
+        "inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS",
+        "inspire-nrw:NRW_FLOOD_RISK_FROM_SEA",
+    ],
+    # Human-readable labels used inside this app.
+    "FRAW – Rivers": ["inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS"],
+    "FRAW – Sea": ["inspire-nrw:NRW_FLOOD_RISK_FROM_SEA"],
+    "FRAW – Surface": ["inspire-nrw:NRW_FLOOD_RISK_FROM_SURFACE_WATER_SMALL_WATERCOURSES"],
+    "FMfP – Rivers & Sea": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
+    "FMfP – Surface/Small Watercourses": ["inspire-nrw:NRW_FLOODZONE_SURFACE_WATER_AND_SMALL_WATERCOURSES"],
+    "Live – Warning Areas": ["inspire-nrw:NRW_FLOOD_WARNING"],
+    "Live – Alert Areas": ["inspire-nrw:NRW_FLOOD_WATCH_AREAS"],
+    "Historic Flood Extents": ["inspire-nrw:NRW_HISTORIC_FLOODMAP"],
+}
+
 FRAW_WMS = {
     "FRAW – Rivers": "inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS",
     "FRAW – Sea": "inspire-nrw:NRW_FLOOD_RISK_FROM_SEA",
@@ -131,6 +156,134 @@ LIVE_WFS = {
     "Warnings": "inspire-nrw:NRW_FLOOD_WARNING",
     "Alerts": "inspire-nrw:NRW_FLOOD_WATCH_AREAS",
 }
+
+
+def _capabilities_cache_path(service: str) -> str:
+    svc = str(service).strip().lower()
+    return os.path.join(WFS_LAYER_CACHE_DIR, f"{svc}_capabilities.xml")
+
+
+def _fetch_ows_capabilities(service: str = "WMS", ttl_days: int = 14) -> bytes:
+    cache_path = _capabilities_cache_path(service)
+    if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < ttl_days * 86400:
+        try:
+            with open(cache_path, "rb") as f:
+                return f.read()
+        except Exception:
+            pass
+
+    params = {
+        "service": str(service).upper(),
+        "version": "1.3.0" if str(service).upper() == "WMS" else "2.0.0",
+        "request": "GetCapabilities",
+    }
+    sess = _requests_session()
+    r = sess.get(OWS_BASE, params=params, timeout=60)
+    r.raise_for_status()
+    raw = r.content
+    try:
+        with open(cache_path, "wb") as f:
+            f.write(raw)
+    except Exception:
+        pass
+    return raw
+
+
+def _norm_tokens(text_: str) -> List[str]:
+    s = re.sub(r"[^a-z0-9]+", " ", str(text_).lower()).strip()
+    return [t for t in s.split() if t]
+
+
+# Tokens that are helpful for fuzzy lookup, excluding semantic classes which are
+# represented as attributes rather than standalone NRW layer names.
+_LAYER_STOPWORDS = {
+    "flood", "zone", "risk", "of", "from", "the", "and", "undefended",
+}
+
+
+def _parse_ows_layers(service: str = "WMS") -> List[Dict[str, str]]:
+    try:
+        raw = _fetch_ows_capabilities(service=service)
+        root = ET.fromstring(raw)
+    except Exception:
+        return []
+
+    layers: List[Dict[str, str]] = []
+    seen: set[Tuple[str, str]] = set()
+    ns_name = lambda tag: tag.rsplit("}", 1)[-1]
+
+    for el in root.iter():
+        if ns_name(el.tag) != "Layer":
+            continue
+        name = None
+        title = None
+        for ch in list(el):
+            t = ns_name(ch.tag)
+            if t == "Name" and ch.text:
+                name = ch.text.strip()
+            elif t == "Title" and ch.text:
+                title = ch.text.strip()
+        if not name and not title:
+            continue
+        key = (name or "", title or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        layers.append({"name": name or "", "title": title or ""})
+    return layers
+
+
+def resolve_ows_layers(requested: str, service: str = "WMS") -> List[str]:
+    """Resolve human/semantic layer requests onto canonical NRW published names.
+
+    This avoids failures such as trying to discover separate layers called
+    'Flood Zone 2 (undefended)' or 'Risk of Flooding (Rivers & Sea)' when NRW
+    instead publishes merged INSPIRE layers whose risk/zone classes live in
+    feature attributes.
+    """
+    req = str(requested or "").strip()
+    if not req:
+        return []
+
+    alias = OWS_LAYER_ALIASES.get(req)
+    if alias:
+        return list(dict.fromkeys(alias))
+
+    advertised = _parse_ows_layers(service=service)
+    if not advertised:
+        return [req]
+
+    req_low = req.lower()
+    exact = [x["name"] for x in advertised if x["name"].lower() == req_low]
+    if exact:
+        return list(dict.fromkeys(exact))
+
+    exact_title = [x["name"] for x in advertised if x["title"].lower() == req_low and x["name"]]
+    if exact_title:
+        return list(dict.fromkeys(exact_title))
+
+    req_tokens = [t for t in _norm_tokens(req) if t not in _LAYER_STOPWORDS]
+    if not req_tokens:
+        return [req]
+
+    scored: List[Tuple[int, int, str]] = []
+    for item in advertised:
+        name = item["name"]
+        title = item["title"]
+        if not name:
+            continue
+        toks = set(_norm_tokens(name) + _norm_tokens(title))
+        overlap = len([t for t in req_tokens if t in toks])
+        if overlap:
+            scored.append((overlap, len(toks), name))
+
+    if scored:
+        scored.sort(key=lambda x: (-x[0], x[1], x[2]))
+        best_overlap = scored[0][0]
+        return list(dict.fromkeys([name for ov, _n, name in scored if ov == best_overlap]))
+
+    return [req]
+
 
 SIM_DEFAULTS = dict(
     start_lat=51.4816,
@@ -461,7 +614,7 @@ def fetch_wfs_layer_cached(
         "service": "WFS",
         "version": "2.0.0",
         "request": "GetFeature",
-        "typeNames": layer_name,
+        "typeNames": ",".join(resolve_ows_layers(layer_name, service="WFS")),
         "outputFormat": "application/json",
         "srsName": "EPSG:4326",
         # WFS 2.0 axis order for EPSG:4326 is often lat,lon:
@@ -1117,9 +1270,12 @@ def preload_zones_json() -> str:
 def add_wms_group(fmap, title_to_layer: dict, visible=True, opacity=0.55):
     for title, layer in title_to_layer.items():
         try:
+            resolved_layers = resolve_ows_layers(layer, service="WMS") if isinstance(layer, str) else [str(layer)]
+            if not resolved_layers:
+                continue
             WmsTileLayer(
                 url=OWS_BASE,
-                layers=layer,
+                layers=",".join(resolved_layers),
                 name=f"{title} (WMS)",
                 fmt="image/png",
                 transparent=True,
@@ -1129,6 +1285,46 @@ def add_wms_group(fmap, title_to_layer: dict, visible=True, opacity=0.55):
             ).add_to(fmap)
         except Exception:
             pass
+
+
+
+def add_fmfp_blue_wfs_group(fmap, bbox_lonlat, visible=True):
+    """Render FMfP flood-zone polygons client-side in fixed blue water-style colours."""
+    layer_styles = {
+        "FMfP – Rivers & Sea": {
+            "fillColor": "#4FC3F7",
+            "color": "#1E88E5",
+            "weight": 1,
+            "fillOpacity": 0.35,
+        },
+        "FMfP – Surface/Small Watercourses": {
+            "fillColor": "#81D4FA",
+            "color": "#29B6F6",
+            "weight": 1,
+            "fillOpacity": 0.30,
+        },
+    }
+    for title, layer in FMFP_WFS.items():
+        try:
+            resolved = resolve_ows_layer(layer, service_type="WFS")
+            g = fetch_wfs_layer_cached(resolved, bbox_lonlat)
+            if g is None or g.empty:
+                continue
+            style = layer_styles.get(title, layer_styles["FMfP – Rivers & Sea"])
+            folium.GeoJson(
+                data=g.__geo_interface__,
+                name=f"{title} (blue)",
+                show=visible,
+                style_function=lambda _feature, style=style: style,
+                highlight_function=lambda _feature: {
+                    "weight": max(2, int(style.get("weight", 1)) + 1),
+                    "fillOpacity": min(0.6, float(style.get("fillOpacity", 0.35)) + 0.1),
+                    "color": style.get("color", "#1E88E5"),
+                    "fillColor": style.get("fillColor", "#4FC3F7"),
+                },
+            ).add_to(fmap)
+        except Exception:
+            continue
 
 def add_base_tiles(m):
     folium.TileLayer(
@@ -1313,7 +1509,7 @@ def render_map_html_ev(
     if show_fraw:
         add_wms_group(m, FRAW_WMS, True, 0.50)
     if show_fmfp:
-        add_wms_group(m, FMFP_WMS, True, 0.55)
+        add_fmfp_blue_wfs_group(m, _bbox_for(gdf_ev if gdf_ev is not None and not gdf_ev.empty else None), visible=True)
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, False, 0.45)
     if show_live:
@@ -1449,7 +1645,7 @@ def render_map_html_route(
     if show_fraw:
         add_wms_group(m, FRAW_WMS, visible=True, opacity=0.60)
     if show_fmfp:
-        add_wms_group(m, FMFP_WMS, visible=True, opacity=0.65)
+        add_fmfp_blue_wfs_group(m, bbox_expand(full_line.bounds, SIM_DEFAULTS["wfs_pad_m"]), visible=True)
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, visible=True, opacity=0.45)
     if show_live:
