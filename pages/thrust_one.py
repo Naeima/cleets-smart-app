@@ -28,10 +28,11 @@ warnings.filterwarnings("ignore")
 # ---------------------------
 # Data sources
 # ---------------------------
-DATA_SOURCE = "https://drive.google.com/uc?id=1GMjkMXOI-wwHa4e4qHkiNNLdHrY-vbIu"
-DATA_SOURCE_LSOA = "https://drive.google.com/uc?export=download&id=1A9gEvzfN9wbxmBdOx8VIo4kqCoM4OWY5"
-WIMD_URL = "https://drive.google.com/uc?export=download&id=1NC_Lds-IsMXNzy7x_PsRVzESPemoOLF0"
-CHARGE_URL = "https://drive.google.com/uc?export=download&id=1RFtC5hSEIrg5yG1rkmfD8JasAK6h212K"
+DATA_SOURCE = "https://drive.google.com/uc?id=1GMjkMXOI-wwHa4e4qHkiNNLdHrY-vbIu" #EV keepership Local Area District (LAD) level 
+DATA_SOURCE_LSOA = "https://drive.google.com/uc?export=download&id=1A9gEvzfN9wbxmBdOx8VIo4kqCoM4OWY5" # EV keepership VEH0135 at Lower Layer Super Output Areas (LSOAs) are small, consistent geographic units used in England and Wales for reporting census and official statistics. Designed by the Office for National Statistics (ONS), they typically contain 400–1,200 households or 1,000–3,000 residents,
+WIMD_URL = "https://drive.google.com/uc?export=download&id=1NC_Lds-IsMXNzy7x_PsRVzESPemoOLF0" # Wales Index of multiple (8 factors) deprevations.
+CHARGE_URL = "https://drive.google.com/uc?export=download&id=1RFtC5hSEIrg5yG1rkmfD8JasAK6h212K" #charging points sourced from ONS as of October 2024. 
+EV_COUNTS_URL = "https://drive.google.com/uc?id=1x5HKrqF4qyIBbUxAv3yeG5E22ich0go2&export=download" # Welsh local-authority EV charger counts as of January 26
 
 # ONS lookup: LSOA21 -> LTLA22 (used if WIMD is LSOA-level)
 LSOA_TO_LAD_FS = (
@@ -290,6 +291,13 @@ def load_charge_df() -> pd.DataFrame:
 
 
 @lru_cache(maxsize=2)
+def load_ev_counts_df() -> pd.DataFrame:
+    df = load_data(EV_COUNTS_URL)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+@lru_cache(maxsize=2)
 def lad_geojson_for_codes(codes_tuple: tuple[str, ...]) -> tuple[dict, str, Optional[str]]:
     lad_meta = arcgis_pjson(f"{LAD_FS}/{LAD_LAYER}")
     lad_fields = [f["name"] for f in lad_meta.get("fields", [])]
@@ -389,6 +397,36 @@ def build_thrust_one_map(
     else:
         gj, geo_code_field, geo_name_field = lad_geojson_for_codes(tuple(codes))
 
+    # ---- EV charger counts by local authority (from user sheet) ----
+    ev_counts_df = load_ev_counts_df().copy()
+    ev_counts_df.columns = [str(c).strip() for c in ev_counts_df.columns]
+    ev_counts_code_col = pick_col(ev_counts_df.columns, ["local authority code", "local_authority_code", "lad code", "lad_code"])
+    ev_counts_name_col = pick_col(ev_counts_df.columns, ["local authority", "local_authority", "lad name", "lad_name"])
+    ev_counts_key_col = pick_col(ev_counts_df.columns, ["key", "metric", "measure"])
+    ev_counts_value_col = pick_col(ev_counts_df.columns, ["value", "count"])
+    ev_counts_date_col = pick_col(ev_counts_df.columns, ["date"])
+
+    ev_counts_by_lad: Dict[str, float] = {}
+    ev_count_date_label = None
+    if all([ev_counts_code_col, ev_counts_key_col, ev_counts_value_col]):
+        evc = ev_counts_df.copy()
+        evc[ev_counts_code_col] = evc[ev_counts_code_col].astype(str).str.strip()
+        evc[ev_counts_key_col] = evc[ev_counts_key_col].astype(str).str.strip()
+        evc["__value_num"] = evc[ev_counts_value_col].apply(parse_num)
+        if ev_counts_date_col:
+            evc["__date"] = pd.to_datetime(evc[ev_counts_date_col], errors="coerce", dayfirst=True)
+        else:
+            evc["__date"] = pd.NaT
+
+        evc = evc[evc[ev_counts_code_col].str.match(r"^W06")].copy()
+        evc = evc[evc[ev_counts_key_col].str.lower().eq("ev chargers")].dropna(subset=["__value_num"]).copy()
+        if not evc.empty:
+            if evc["__date"].notna().any():
+                latest_date = evc["__date"].max()
+                evc = evc[evc["__date"].eq(latest_date)].copy()
+                ev_count_date_label = latest_date.strftime("%d %B %Y")
+            ev_counts_by_lad = dict(zip(evc[ev_counts_code_col].astype(str), evc["__value_num"].astype(float)))
+
     # ---- BEV heat points ----
     bev_heat_pts = []
     for feat in gj["features"]:
@@ -415,6 +453,27 @@ def build_thrust_one_map(
            show=False,
            ).add_to(m)
 
+
+    # ---- EV charger counts choropleth (LAD only) ----
+    if ev_counts_by_lad and geo_level == "LAD":
+        evcmini = pd.DataFrame({"Area code": list(ev_counts_by_lad.keys()), "val": list(ev_counts_by_lad.values())})
+        evc_legend = "Public EV chargers by local authority"
+        if ev_count_date_label:
+            evc_legend += f" ({ev_count_date_label})"
+        folium.Choropleth(
+            geo_data=gj,
+            data=evcmini,
+            columns=["Area code", "val"],
+            key_on=f"feature.properties.{geo_code_field}",
+            name="EV chargers by local authority (choropleth)",
+            fill_color="YlOrRd",
+            fill_opacity=0.45,
+            line_color="#bdbdbd",
+            line_opacity=0.7,
+            line_weight=1.0,
+            legend_name=evc_legend,
+            show=False,
+        ).add_to(m)
 
     # ---- BEV layer ----
     HeatMap(
@@ -507,7 +566,7 @@ def build_thrust_one_map(
             merged = merged[merged[lad_lookup_field].isin(codes_set)].copy()
 
             for dom, g in merged.groupby("Domain", dropna=True):
-                lad_vals = g.groupby(lad_lookup_field)["__value_num"].mean()
+                lad_vals = g.groupby(lad_lookup_field)["__value_num"].median()
                 domain_value_by_code[str(dom)] = lad_vals.to_dict()
 
     # ---- WIMD layers ----
@@ -580,6 +639,9 @@ def build_thrust_one_map(
         props = {("LSOA" if geo_level=="LSOA" else "LAD"): lad_name}
         bev = bev_by_code.get(lad_code)
         props[f"BEV ({quarter})"] = f"{int(bev):,}" if (bev is not None and np.isfinite(bev)) else "NA"
+        evc = ev_counts_by_lad.get(lad_code) if geo_level == "LAD" else None
+        if geo_level == "LAD":
+            props["EV chargers (count)"] = f"{int(evc):,}" if (evc is not None and np.isfinite(evc)) else "NA"
 
         for dom in domains_sorted:
             v = domain_value_by_code[dom].get(lad_code)
@@ -588,8 +650,8 @@ def build_thrust_one_map(
         hover_gj["features"].append({"type": "Feature", "geometry": feat["geometry"], "properties": props})
 
         geo_label = "LSOA" if geo_level=="LSOA" else "LAD"
-    tooltip_fields = [geo_label, f"BEV ({quarter})"] + [f"WIMD {dom} (rank)" for dom in domains_sorted]
-    tooltip_aliases = [f"{geo_label}:", f"BEV ({quarter}):"] + [f"{dom} rank:" for dom in domains_sorted]
+    tooltip_fields = [geo_label, f"BEV ({quarter})"] + (["EV chargers (count)"] if geo_level == "LAD" else []) + [f"WIMD {dom} (rank)" for dom in domains_sorted]
+    tooltip_aliases = [f"{geo_label}:", f"BEV ({quarter}):"] + (["EV chargers:"] if geo_level == "LAD" else []) + [f"{dom} rank:" for dom in domains_sorted]
 
     folium.GeoJson(
         hover_gj,
@@ -710,7 +772,7 @@ def build_thrust_one_map(
 # Dash layout
 # ---------------------------
 try:
-    _df = load_bev_df()
+    _df = load_bev_lad_df()
     QUARTERS = available_quarters(_df)
 except Exception:
     QUARTERS = ["2025 Q3"]
@@ -756,6 +818,22 @@ layout = html.Div(
                 ),
                 html.Div(
                     [
+                        html.Label("Geography:"),
+                        dcc.Dropdown(
+                            id="t1-geo",
+                            options=[
+                                {"label": "Local authority district (LAD)", "value": "LAD"},
+                                {"label": "Lower layer super output area (LSOA)", "value": "LSOA"},
+                            ],
+                            value="LAD",
+                            clearable=False,
+                            style={"minWidth": "280px"},
+                        ),
+                    ],
+                    style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
+                ),
+                html.Div(
+                    [
                         html.Label("Options:"),
                         dcc.Checklist(
                             id="t1-options",
@@ -763,8 +841,7 @@ layout = html.Div(
                                 {"label": "Show charging points", "value": "charging"},
                                 {"label": "Enable centroid labels layer", "value": "centroids"},
                             ],
-                            
-			    value=["charging", "centroids"],
+                            value=["charging", "centroids"],
                             style={"marginTop": "6px"},
                         ),
                     ],

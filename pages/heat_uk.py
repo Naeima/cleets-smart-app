@@ -62,7 +62,7 @@ HEAT_DATASETS = {
     "HEAT 2010–2020": {"fid": "18YV53RC6yxzkGe0tkBVBIa-p0PW6n-w9", "path": os.path.join(DATA_DIR, "heat_2010_2020.nc")},
     # --- Future ---
     "HEAT 2020–2030": {"fid": "1XfbVO0cnmNFC0oT-FyspAAypLlyN3Gcw", "path": os.path.join(DATA_DIR, "heat_2020_2030.nc")},
-    "HEAT 2030–2040": {"fid": "1wi5TFdfhNdwjyc4KdS34h1Enxajb09WH", "path": os.path.join(DATA_DIR, "heat_2030_2040.nc")},
+    "HEAT 2030–2040": {"fid": "1OOEUaevo0VVUE5MPZtFKrarfB0RK6Kec", "path": os.path.join(DATA_DIR, "heat_2030_2040.nc")},  #https://drive.google.com/file/d/1OOEUaevo0VVUE5MPZtFKrarfB0RK6Kec/view?usp=sharing
     "HEAT 2040–2050": {"fid": "1ngGta9tgC6Pa5Or4LgYlViVEgnjanHyk", "path": os.path.join(DATA_DIR, "heat_2040_2050.nc")},
     "HEAT 2050–2060": {"fid": "10DrxTWyBM_D0wT5WIFJZN9tVpqZKpKhQ", "path": os.path.join(DATA_DIR, "heat_2050_2060.nc")},
     "HEAT 2060–2070": {"fid": "1SBIqkPwhoCEvBWvzFbQgXta5G3R8M1iD", "path": os.path.join(DATA_DIR, "heat_2060_2070.nc")},
