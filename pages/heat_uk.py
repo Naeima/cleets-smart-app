@@ -383,6 +383,25 @@ def _ym_from_time_values(time_values) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(years, dtype=int), np.asarray(months, dtype=int)
 
 
+def _parse_decade_bounds(decade_label: str) -> tuple[int, int]:
+    """
+    Parse labels like 'HEAT 2040–2050' or 'HEAT 2040-2050'.
+
+    Convention used here:
+      - map/file label end year is exclusive for slicing annual series
+      - e.g. '2040–2050' returns years 2040..2049
+    This avoids double-counting boundary years across adjacent decade files.
+    """
+    m = re.search(r"(\d{4}).*?(\d{4})", decade_label)
+    if not m:
+        raise ValueError(f"Could not parse years from label: {decade_label}")
+    start_year = int(m.group(1))
+    end_year = int(m.group(2))
+    if end_year <= start_year:
+        raise ValueError(f"Invalid decade bounds in label: {decade_label}")
+    return start_year, end_year
+
+
 def _monthly_series_for_file(path: str) -> pd.Series:
     """Monthly UK-mean tas (°C) as a Series indexed by (year, month)."""
     ds = xr.open_dataset(path, engine="netcdf4")
@@ -427,13 +446,17 @@ def _continuous_monthly_series() -> pd.Series:
 
 @lru_cache(maxsize=2)
 def _continuous_annual_series() -> pd.Series:
-    """Annual means from the continuous monthly series; keep only years with 12 months."""
+    """
+    Annual means from the continuous monthly series.
+
+    Keep years with at least 12 distinct months. If overlap resolution leaves more
+    than 12 monthly entries impossible? no, because overlaps are merged upstream by
+    (year, month). This function is intentionally strict so incomplete boundary years
+    do not silently disappear without a defined rule.
+    """
     m = _continuous_monthly_series()
 
-    # count months per year (after merging overlaps)
     month_counts = m.groupby(level=0).size()
-
-    # annual mean from months (each month weighted equally here; consistent with 360-day monthly means)
     annual = m.groupby(level=0).mean()
 
     keep_years = month_counts[month_counts >= 12].index.astype(int)
@@ -461,13 +484,16 @@ def _continuous_anomaly_series() -> pd.Series:
 
 @lru_cache(maxsize=64)
 def decade_anomaly_series(decade_label: str) -> pd.Series:
-    """Decade slice of the cleaned continuous anomaly series."""
+    """
+    Decade slice of the cleaned continuous anomaly series.
+
+    The file labels are treated as half-open intervals [start, end), so
+    'HEAT 2040–2050' maps to years 2040..2049. This prevents the shared
+    boundary year from being visually assigned to two adjacent decades.
+    """
     anom = _continuous_anomaly_series()
-    m = re.search(r"(\d{4}).*?(\d{4})", decade_label)
-    if not m:
-        raise ValueError(f"Could not parse years from label: {decade_label}")
-    y0, y1 = int(m.group(1)), int(m.group(2))
-    s = anom.loc[y0:y1].copy()
+    y0, y1 = _parse_decade_bounds(decade_label)
+    s = anom[(anom.index.astype(int) >= y0) & (anom.index.astype(int) < y1)].copy()
     s.name = decade_label
     return s
 
@@ -480,7 +506,6 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
     selected_decades = selected_decades or list(HEAT_FILES.keys())
     fig = go.Figure()
 
-    # Continuous anomaly series built from monthly stitching across files (years require 12 months)
     anom = _continuous_anomaly_series()
 
     fig.add_trace(
@@ -489,25 +514,28 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
             y=anom.values,
             mode="lines+markers",
             name="Annual anomaly (continuous)",
-            line=dict(width=3),
+            line=dict(width=3, color="#111111"),
             hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
         )
     )
 
-    # Optional per-decade overlays (hidden by default)
     for lab in HEAT_FILES.keys():
         if lab not in selected_decades:
             continue
+
         s = decade_anomaly_series(lab)
+        if s.empty:
+            continue
+
         fig.add_trace(
             go.Scatter(
                 x=s.index.astype(int),
                 y=s.values,
                 mode="lines+markers",
                 name=lab,
-                visible="legendonly",
-                line=dict(color=HEAT_TS_COLORS.get(lab)) if HEAT_TS_COLORS.get(lab) else None,
-                hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
+                visible=True,
+                line=dict(color=HEAT_TS_COLORS.get(lab, "#333333"), width=2),
+                hovertemplate="<b>%{fullData.name}</b><br>Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
             )
         )
 
@@ -517,8 +545,9 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
         title=(
             "Annual mean temperature anomaly — continuous series (baseline 1990–2000)<br>"
             "<sup>"
-            "Method: UK-mean tas → monthly means per (year,month) → stitch across decadal files (median for overlaps) "
-            "→ annual means (years with 12 months only) → anomaly relative to 1990–2000."
+            "Method: UK-mean tas → monthly means per (year, month) → stitch across decadal files (median for overlaps) "
+            "→ annual means (years with 12 months only) → anomaly relative to 1990–2000. "
+            "Decade overlays use half-open ranges [start, end), so boundary years are not double-counted."
             "</sup>"
         ),
         yaxis_title="Temperature anomaly (°C)",
@@ -544,11 +573,8 @@ def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> g
     for lab in HEAT_FILES.keys():
         if lab not in selected_decades:
             continue
-        m = re.search(r"(\d{4}).*?(\d{4})", lab)
-        if not m:
-            continue
-        y0, y1 = int(m.group(1)), int(m.group(2))
-        years_keep.update(range(y0, y1 + 1))
+        y0, y1 = _parse_decade_bounds(lab)
+        years_keep.update(range(y0, y1))
 
     if years_keep:
         idx = [int(y) for y in anom.index.astype(int) if int(y) in years_keep]
@@ -1351,7 +1377,11 @@ def build_map(
     except Exception as e:
         folium.Marker(
             [lat0, lon0],
-            icon= None
+            icon=folium.DivIcon(
+                html="<div style='background:#fff3cd;border:1px solid #ffc107;"
+                     "padding:10px;border-radius:10px;font-weight:800;'>"
+                     f"Transport GHG layer error: {e}</div>"
+            ),
         ).add_to(m)
 
     # Policy overlays + summary (mitigation + co-benefits)
@@ -1532,7 +1562,7 @@ layout = html.Div(
         **Source:** same DAFNI NetCDF layers.  
         **Method:** UK-mean **tas** → annual mean per year → anomaly relative to the 1990–2000 average.
         **Summary:** For each year, it shows how much the UK’s average temperature (from the tas data) is above or below the 1990–2000 average.
-        **Each coloured line corresponds to a different decadal dataset (e.g., 2010–2020, 2040–2050), plotted as yearly deviations from that baseline.
+        Each coloured line corresponds to a different decadal dataset (e.g., 2010–2020, 2040–2050), plotted as yearly deviations from that baseline.
         """,
             style={"maxWidth": "1100px", "margin": "10px auto 18px", "fontSize": "18px", "lineHeight": "1.5"},
         ),
