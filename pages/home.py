@@ -258,25 +258,22 @@ layout = html.Div([
                         }
                     ),
                     html.A(
-                        " CLEETS-SMART is a product of the Data Science Team at CLEETS Global Centre. Contact: Dr Naeima Hamed (hamednh@cardiff.ac.uk; nhamed@illinois.edu)",
+                        " CLEETS-SMART is a product of the Data Science Team at CLEETS Global Centre. Lead: Dr Naeima Hamed",
                         href="https://cleets-global-center.org/",
                         target="_blank",
-                        # style={"fontWeight": "bold", "textDecoration": "none"}
-                    ),
-                    # html.P("A weather dashboard built using the Open-Meteo API.")
-                ],
-                style={
-                    "border": "1px solid #cfe2f3",
-                    "borderRadius": "12px",
-                    "padding": "20px",
-                    "backgroundColor": "#e6f7f5",
-                    "fontSize": "32px",
-                    "width": "30%",
-                    "minWidth": "350px",
-                    "textAlign": "center"
-                }
-            )
-            
+                    ),  
+                ],          
+                #     style={
+                #         "border": "1px solid #cfe2f3",
+                #         "borderRadius": "12px",
+                #         "padding": "20px",
+                #         "backgroundColor": "#e6f7f5",
+                #         "fontSize": "32px",
+                #         "width": "30%",
+                #         "minWidth": "350px",
+                #         "textAlign": "center"
+                # }
+            )  
         ]
     )
 ])
