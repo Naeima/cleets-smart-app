@@ -1,7 +1,10 @@
 services:
   cleets-smart:
     build: .
+    image: cleets-smart
     container_name: cleets-smart
-    restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8052:8052"
+    restart: unless-stopped
+
+
