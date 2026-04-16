@@ -79,7 +79,6 @@ for label, meta in HEAT_DATASETS.items():
                 f"https://drive.google.com/uc?id={meta['fid']}",
                 target,
                 quiet=False,
-                fuzzy=True,
             )
 
         # gdown.download(f"https://drive.google.com/uc?id={meta['fid']}", meta["path"], quiet=False)
