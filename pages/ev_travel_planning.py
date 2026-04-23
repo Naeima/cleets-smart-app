@@ -10,6 +10,7 @@ import json
 import time
 import math
 import heapq
+import pickle
 import hashlib
 import gzip
 import zipfile
@@ -732,6 +733,9 @@ def _osrm_try(base_url, sl, so, el, eo, want_steps=True):
     sess = _requests_session_osrm()
     r = sess.get(url, params=params, timeout=20)
     r.raise_for_status()
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    if "json" not in ctype:
+        raise RuntimeError(f"Unexpected OSRM content type: {ctype}")
     data = r.json()
     if not data.get("routes"):
         raise RuntimeError("No routes")
@@ -821,6 +825,14 @@ def _graph_point_cache_path(lat, lon, dist_m):
 
 def _graph_bbox_cache_path(north, south, east, west):
     key = f"bbox_{round(north,5)}_{round(south,5)}_{round(east,5)}_{round(west,5)}.graphml"
+    return os.path.join(GRAPH_CACHE_DIR, key)
+
+def _processed_graph_cache_path(start_lat, start_lon, end_lat, end_lon, mode_tag: str) -> str:
+    key = (
+        f"proc_{mode_tag}_"
+        f"{round(float(start_lat), 3)}_{round(float(start_lon), 3)}_"
+        f"{round(float(end_lat), 3)}_{round(float(end_lon), 3)}.pkl"
+    )
     return os.path.join(GRAPH_CACHE_DIR, key)
 
 def _ox_save_graphml(G, path):
@@ -956,6 +968,8 @@ def rcsp_optimize(
     if not HAS_OSMNX:
         raise RuntimeError("OSMnx not installed")
 
+    total_t0 = time.time()
+
     # --- graph bbox ---
     minlat, maxlat = sorted([float(start_lat), float(end_lat)])
     minlon, maxlon = sorted([float(start_lon), float(end_lon)])
@@ -968,18 +982,55 @@ def rcsp_optimize(
     south, north = minlat - pad, maxlat + pad
     west, east = minlon - pad, maxlon + pad
 
-    if (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG or diag_km > 60.0:
-        G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=30000)
+    use_point_graph = (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG or diag_km > 30.0
+    mode_tag = "two_points" if use_point_graph else "bbox"
+    proc_path = _processed_graph_cache_path(start_lat, start_lon, end_lat, end_lon, mode_tag)
+
+    G = None
+    edges = None
+    edges_m = None
+
+    if os.path.exists(proc_path):
+        try:
+            with open(proc_path, "rb") as f:
+                cached = pickle.load(f)
+            G = cached.get("G")
+            edges = cached.get("edges")
+            edges_m = cached.get("edges_m")
+        except Exception:
+            G = None
+            edges = None
+            edges_m = None
+
+    if G is None or edges is None or edges_m is None:
+        stage_t0 = time.time()
+        if use_point_graph:
+            G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=30000)
+        else:
+            G = _build_graph_bbox(north, south, east, west)
+
+        if time.time() - total_t0 > 20:
+            raise TimeoutError("Graph build too slow")
+
+        G = ox.add_edge_speeds(G)
+        G = ox.add_edge_travel_times(G)
+
+        Gm = ox.project_graph(G, to_crs="EPSG:27700")
+        edges_m = ox.graph_to_gdfs(Gm, nodes=False, edges=True, fill_edge_geometry=True)
+        edges = ox.graph_to_gdfs(G, nodes=False, edges=True, fill_edge_geometry=True)
+
+        try:
+            with open(proc_path, "wb") as f:
+                pickle.dump({"G": G, "edges": edges, "edges_m": edges_m}, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            pass
+
+        print(f"[rcsp_optimize] graph prep: {time.time() - stage_t0:.2f}s (diag_km={diag_km:.1f}, mode={mode_tag})")
     else:
-        G = _build_graph_bbox(north, south, east, west)
+        print(f"[rcsp_optimize] graph prep: cache hit (diag_km={diag_km:.1f}, mode={mode_tag})")
 
-    # --- enrich edges ---
-    G = ox.add_edge_speeds(G)
-    G = ox.add_edge_travel_times(G)
-
-    Gm = ox.project_graph(G, to_crs="EPSG:27700")
-    edges_m = ox.graph_to_gdfs(Gm, nodes=False, edges=True, fill_edge_geometry=True)
-    edges = ox.graph_to_gdfs(G, nodes=False, edges=True, fill_edge_geometry=True)
+    if time.time() - total_t0 > 25:
+        raise TimeoutError("Route optimisation exceeded callback budget")
 
     # --- risk tag ---
     if flood_union_m is not None:
@@ -1164,6 +1215,7 @@ def rcsp_optimize(
     line = LineString(coords)
     safe_lines, risk_lines = segment_route_by_risk(line, flood_union_m, buffer_m=ROUTE_BUFFER_M)
     total_cost = float(best.get(goal, float("inf")))
+    print(f"[rcsp_optimize] total: {time.time() - total_t0:.2f}s")
 
     return line, safe_lines, risk_lines, stops, total_cost
 
@@ -1742,8 +1794,8 @@ def build_kml(route_data: Dict[str, Any]) -> str:
 layout = html.Div(
     [
         html.H1(
-            "C) Electric Vehicle (EV) Chargers & Flood Overlays & Journey Simulator (EV Travel Planning)",
-            style={"margin": "24px 7px 8px"},
+            "C) Electric Vehicle (EV) Chargers & Flood Overlays and EV Travel Planning",
+            style={"margin": "24px 7px 8px", "fontSize": "50px"},
         ),
 
         # --- explainer boxes ---
@@ -1783,7 +1835,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#eaf3fb",
-                        "fontSize": "15px",
+                        "fontSize": "18px",
                     },
                 ),
                 html.Div(
@@ -1810,7 +1862,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                                 "padding": "14px",
                                 "borderRadius": "10px",
                                 "backgroundColor": "#e6f7f5",
-                                "fontSize": "15px",
+                                "fontSize": "25px",
                             },
                         ),
                     ],
@@ -1819,7 +1871,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#fff2e6",
-                        "fontSize": "15px",
+                        "fontSize": "25px",
                     },
                 ),
             ],
@@ -1847,7 +1899,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                             placeholder="All countries",
                         ),
                     ],
-                    style={"minWidth": "260px"},
+                    style={"minWidth": "230px"},
                 ),
                 html.Div(
                     [
@@ -1925,7 +1977,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         dcc.Input(id="sla", type="number", value=SIM_DEFAULTS["start_lat"], step=0.001, style={"width": "45%"}),
                         dcc.Input(id="slo", type="number", value=SIM_DEFAULTS["start_lon"], step=0.001, style={"width": "45%", "marginLeft": "4px"}),
                     ],
-                    style={"minWidth": "260px"},
+                    style={"minWidth": "230px"},
                 ),
                 html.Div(
                     [

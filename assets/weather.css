@@ -1,0 +1,9 @@
+* { box-sizing: border-box; }
+html { font-size: 200%; }
+body { margin: 0; overflow-x: hidden; }
+@media (max-width: 900px) {
+  html { font-size: 150%; }
+  .wf-toolbar { display: flex !important; flex-wrap: wrap !important; gap: 12px !important; margin: 12px !important; justify-content: stretch !important; }
+  .wf-field, .wf-button-wrap { display: block !important; width: 100% !important; margin-left: 0 !important; }
+  #wf-map { height: 62vh !important; min-height: 420px; }
+}

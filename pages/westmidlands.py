@@ -47,6 +47,16 @@ except Exception:  # pragma: no cover
 # Dash page registration (Dash Pages expects module-level `layout`)
 # ============================================================
 register_page(__name__, path="/westmidlands", name="West Midlands Flood + EV")
+
+MOBILE_STYLE = """
+* { box-sizing: border-box; }
+html { font-size: 200%; }
+body { margin: 0; overflow-x: hidden; }
+@media (max-width: 900px) {
+  html { font-size: 150%; }
+  #wm-map { height: 62vh !important; min-height: 420px; }
+}
+"""
  
  
 # =========================
@@ -892,7 +902,7 @@ layout = html.Div(
             style={"display": "flex", "gap": "10px", "margin": "8px 0"},
         ),
  
-        html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="1050"),
+        html.Iframe(id="wm-map", srcDoc=initial_map_html(), width="100%", height="820"),
  
         html.Div(
             [

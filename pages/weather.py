@@ -29,6 +29,7 @@ register_page(__name__, path="/weather-forecaster")
 
 
 
+
 # ============================================================
 # 0) City gazetteer (South Wales) - AUTO from OS Open Names
 # ============================================================
@@ -527,10 +528,10 @@ layout = html.Div(
                             value=["Cardiff", "Swansea"],
                             multi=True,
                             placeholder="Select one or more cities…",
-                            style={"minWidth": "360px"},
+                            style={"minWidth": "0", "width": "100%", "maxWidth": "420px"},
                         ),
                     ],
-                    style={"display": "inline-block", "verticalAlign": "top"},
+                    className="wf-field", style={"display": "inline-block", "verticalAlign": "top"},
                 ),
                 html.Div(
                     [
@@ -541,14 +542,14 @@ layout = html.Div(
                             value="Cardiff",
                             multi=False,
                             clearable=False,
-                            style={"minWidth": "260px"},
+                            style={"minWidth": "0", "width": "100%", "maxWidth": "320px"},
                         ),
                     ],
-                    style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
+                    className="wf-field", style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
                 ),
-                html.Button("Update Forecast", id="wf-refresh", n_clicks=0, style={"marginLeft": "14px", "height": "38px"}),
+                html.Div(html.Button("Update Forecast", id="wf-refresh", n_clicks=0, style={"height": "38px", "width": "100%"}), className="wf-button-wrap", style={"display": "inline-block", "marginLeft": "14px", "verticalAlign": "top"}),
             ],
-            style={"textAlign": "center", "margin": "15px"},
+            className="wf-toolbar", style={"textAlign": "center", "margin": "15px"},
         ),
         html.Iframe(
             id="wf-map",

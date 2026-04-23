@@ -1,0 +1,27 @@
+* { box-sizing: border-box; }
+html { font-size: 200%; }
+body { margin: 0; overflow-x: hidden; }
+a { overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  html { font-size: 150%; }
+  .home-header img { height: min(120px, 24vw) !important; }
+  .home-header h1 {
+    font-size: clamp(1.15rem, 6vw, 2rem) !important;
+    line-height: 1.2 !important;
+    padding: 0 10px;
+  }
+  .home-cards { padding: 12px !important; gap: 12px !important; }
+  .home-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 1rem !important;
+    padding: 14px !important;
+  }
+  .home-card img {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 180px !important;
+    object-fit: contain !important;
+  }
+}

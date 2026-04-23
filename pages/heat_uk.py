@@ -97,6 +97,16 @@ HEAT_TS_COLORS = {
     "HEAT 2060–2070": "#e377c2",
 }
 
+TS_FONT_STYLE = {
+    "base": 18,
+    "title": 24,
+    "axis_title": 20,
+    "ticks": 16,
+    "legend": 16,
+    "hover": 16,
+}
+
+
 # ============================================================
 # 1. Transport GHG (Local Authority)
 # ============================================================
@@ -341,18 +351,25 @@ def build_daily_uk_mean_chart(selected_decades: Optional[list[str]] = None) -> g
     fig.update_layout(
         template="plotly_white",
         margin=dict(l=55, r=35, t=70, b=55),
-        title=(
-            "Daily mean near-surface air temperature (tas) — UK mean<br>"
-            "<sup>"
-            "Source: DAFNI NetCDF layers (downloaded via Google Drive). "
-            "Method: for each timestep, tas is averaged over the full grid and ensemble_member; "
-            "series are concatenated sequentially by decade to avoid overlapping x-values."
-            "</sup>"
+        title=dict(
+            text=(
+                "Daily mean near-surface air temperature (tas) — UK mean<br>"
+                "<sup>"
+                "Source: DAFNI NetCDF layers (downloaded via Google Drive). "
+                "Method: for each timestep, tas is averaged over the full grid and ensemble_member; "
+                "series are concatenated sequentially by decade to avoid overlapping x-values."
+                "</sup>"
+            ),
+            font=dict(size=TS_FONT_STYLE["title"]),
         ),
         xaxis_title="Decade blocks (concatenated sequentially)",
         yaxis_title="Temperature (°C)",
+        font=dict(size=TS_FONT_STYLE["base"]),
+        xaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.25),
+        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
     )
 
     if tickvals and ticktext:
@@ -541,17 +558,24 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
     fig.update_layout(
         template="plotly_white",
         margin=dict(l=50, r=40, t=70, b=55),
-        title=(
-            "Annual mean temperature anomaly — continuous series (baseline 1990–2000)<br>"
-            "<sup>"
-            "Method: UK-mean tas → monthly means per (year, month) → stitch across decadal files (median for overlaps) "
-            "→ annual means (years with 12 months only) → anomaly relative to 1990–2000. "
-            "Decade overlays use half-open ranges [start, end), so boundary years are not double-counted."
-            "</sup>"
+        title=dict(
+            text=(
+                "Annual mean temperature anomaly — continuous series (baseline 1990–2000)<br>"
+                "<sup>"
+                "Method: UK-mean tas → monthly means per (year, month) → stitch across decadal files (median for overlaps) "
+                "→ annual means (years with 12 months only) → anomaly relative to 1990–2000. "
+                "Decade overlays use half-open ranges [start, end), so boundary years are not double-counted."
+                "</sup>"
+            ),
+            font=dict(size=TS_FONT_STYLE["title"]),
         ),
         yaxis_title="Temperature anomaly (°C)",
         xaxis_title="Year",
-        legend=dict(orientation="h", y=-0.25),
+        font=dict(size=TS_FONT_STYLE["base"]),
+        xaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
+        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
     )
     fig.update_xaxes(type="linear", tickmode="auto")
     return fig
@@ -606,18 +630,25 @@ def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> g
     )
 
     fig.update_layout(
-        title=(
-            "Rise in Average Temperature Relative to Paris Agreement Targets<br>"
-            "<sup>"
-            "Method: monthly stitching across decadal files; annual values require 12 months; "
-            "anomalies relative to 1990–2000."
-            "</sup>"
+        title=dict(
+            text=(
+                "Rise in Average Temperature Relative to Paris Agreement Targets<br>"
+                "<sup>"
+                "Method: monthly stitching across decadal files; annual values require 12 months; "
+                "anomalies relative to 1990–2000."
+                "</sup>"
+            ),
+            font=dict(size=TS_FONT_STYLE["title"]),
         ),
         xaxis_title="Year",
         yaxis_title="Temperature Anomaly (°C relative to 1990–2000)",
         template="plotly_white",
         margin=dict(l=55, r=35, t=70, b=55),
-        legend=dict(orientation="h", y=-0.25),
+        font=dict(size=TS_FONT_STYLE["base"]),
+        xaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
+        hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
+        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
     )
     fig.update_xaxes(type="linear", tickmode="auto")
     return fig
@@ -1551,19 +1582,23 @@ layout = html.Div(
         **Source:** DAFNI NetCDF layers (downloaded via Google Drive in this app).  
         **Method:** at each timestep, compute the UK mean by averaging **tas** over the full grid and **ensemble_member**.  
         """,
-            style={"maxWidth": "1100px", "margin": "0 auto 8px", "fontSize": "18px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "0 auto 8px", "fontSize": "24px", "lineHeight": "1.5"},
         ),
         dcc.Graph(id="heat-daily-chart", figure=build_daily_uk_mean_chart(list(HEAT_FILES.keys()))),
 
         dcc.Markdown(
         """
-        **Annual anomaly time series (baseline 1990–2000).**  
-        **Source:** same DAFNI NetCDF layers.  
-        **Method:** UK-mean **tas** → annual mean per year → anomaly relative to the 1990–2000 average.
-        **Summary:** For each year, it shows how much the UK’s average temperature (from the tas data) is above or below the 1990–2000 average.
+        **Annual anomaly time series (baseline 1990–2000).**  \\
+        
+        **Source:** same DAFNI NetCDF layers.  \\
+        
+        **Method:** UK-mean **tas** → annual mean per year → anomaly relative to the 1990–2000 average. \\
+        
+        **Summary:** For each year, it shows how much the UK’s average temperature (from the tas data) is above or below the 1990–2000 average. \\
+        
         Each coloured line corresponds to a different decadal dataset (e.g., 2010–2020, 2040–2050), plotted as yearly deviations from that baseline.
         """,
-            style={"maxWidth": "1100px", "margin": "10px auto 18px", "fontSize": "18px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "18px auto 18px", "fontSize": "24px", "lineHeight": "1.5"},
         ),
         dcc.Graph(id="heat-chart", figure=build_decade_separated_anomaly_chart(list(HEAT_FILES.keys()))),
 
@@ -1571,12 +1606,15 @@ layout = html.Div(
 
         dcc.Markdown(
         """
-        **Paris thresholds (mean anomaly).**  
-        **Source:** DAFNI NetCDF layers.  
-        **Method:** compute annual anomalies (baseline 1990–2000) for each selected decade-series, then take the mean anomaly per year; overlay 1.5°C and 2.0°C reference lines.
+        **Paris thresholds (mean anomaly).**  \\
+        
+        **Source:** DAFNI NetCDF layers.  \\
+        
+        **Method:** compute annual anomalies (baseline 1990–2000) for each selected decade-series, then take the mean anomaly per year; overlay 1.5°C and 2.0°C reference lines. \\
+        
         **Summary:** It takes those yearly “above/below baseline” values across the selected decadal datasets, averages them into one mean line per year, and then shows how that mean compares to 1.5°C and 2.0°C reference lines (the Paris Agreement thresholds).
         """,
-            style={"maxWidth": "1100px", "margin": "10px auto 18px", "fontSize": "18px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "18px auto 28px", "fontSize": "24px", "lineHeight": "1.5"},
                 ),
         dcc.Graph(id="paris-chart", figure=build_paris_targets_chart(list(HEAT_FILES.keys()))),
     ]

@@ -53,6 +53,7 @@ LSOA_LAYER = "3"
 register_page(__name__, path="/thrust-one")
 
 
+
 # ---------------------------
 # Helpers
 # ---------------------------
@@ -761,7 +762,43 @@ def build_thrust_one_map(
     """
     js_macro = MacroElement()
     js_macro._template = Template(js)
-    m.get_root().add_child(js_macro)
+    m.get_root().add_child(js_macro)# ---- Font size overrides ----
+    css_fonts = """
+{% macro html(this, kwargs) %}
+<style>
+/* Layer control (right panel) */
+.leaflet-control-layers {
+    font-size: 16px !important;
+}
+.leaflet-control-layers label {
+    font-size: 16px !important;
+}
+
+/* Hover tooltip */
+.leaflet-tooltip {
+    font-size: 15px !important;
+    line-height: 1.4;
+}
+
+/* Choropleth legend (top bar) */
+.legend {
+    font-size: 16px !important;
+}
+.legend .caption {
+    font-size: 16px !important;
+}
+.legend-scale ul li {
+    font-size: 14px !important;
+}
+.leaflet-control .legend {
+    padding: 10px 12px !important;
+}
+</style>
+{% endmacro %}
+"""
+    macro_fonts = MacroElement()
+    macro_fonts._template = Template(css_fonts)
+    m.get_root().add_child(macro_fonts)
 
     folium.LayerControl(collapsed=False).add_to(m)
 
@@ -794,7 +831,7 @@ layout = html.Div(
                             options=[{"label": q, "value": q} for q in QUARTERS],
                             value=QUARTERS[0],
                             clearable=False,
-                            style={"minWidth": "220px"},
+                            className="thrust-field", style={"minWidth": "0", "flex": "1 1 220px"},
                         ),
                     ],
                     style={"display": "inline-block", "verticalAlign": "top"},
@@ -811,7 +848,7 @@ layout = html.Div(
                             value="Income",
                             clearable=True,
                             placeholder="None (hide by default)",
-                            style={"minWidth": "280px"},
+                            className="thrust-field", style={"minWidth": "0", "flex": "1 1 280px"},
                         ),
                     ],
                     style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
@@ -827,7 +864,7 @@ layout = html.Div(
                             ],
                             value="LAD",
                             clearable=False,
-                            style={"minWidth": "280px"},
+                            className="thrust-field", style={"minWidth": "0", "flex": "1 1 280px"},
                         ),
                     ],
                     style={"display": "inline-block", "verticalAlign": "top", "marginLeft": "14px"},
