@@ -1385,8 +1385,15 @@ def add_fmfp_blue_wfs_group(fmap, bbox_lonlat, visible=True):
     }
     for title, layer in FMFP_WFS.items():
         try:
-            resolved = resolve_ows_layer(layer, service_type="WFS")
-            g = fetch_wfs_layer_cached(resolved, bbox_lonlat)
+            resolved_layers = resolve_ows_layers(layer, service="WFS")
+            g_parts = []
+            for resolved in resolved_layers:
+                g0 = fetch_wfs_layer_cached(resolved, bbox_lonlat)
+                if g0 is not None and not g0.empty:
+                    g_parts.append(g0)
+            if not g_parts:
+                continue
+            g = gpd.GeoDataFrame(pd.concat(g_parts, ignore_index=True), geometry="geometry", crs="EPSG:4326")
             if g is None or g.empty:
                 continue
             style = layer_styles.get(title, layer_styles["FMfP – Rivers & Sea"])
@@ -1439,6 +1446,7 @@ def add_live_wms_blue_group(fmap, visible=True, opacity=0.75):
                 opacity=opacity,
                 version="1.3.0",
                 show=visible,
+                **{"className": "live-warning-blue-tile"},
             ).add_to(fmap)
         except Exception as e:
             print(f"[Live WMS Blue] skipped {title}: {e}")
@@ -1632,7 +1640,7 @@ def render_map_html_ev(
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, False, 0.45)
     if show_live:
-        add_live_wms_blue_group(m, visible=True, opacity=0.75)
+        add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
 
     if heat_data:
         add_heat_overlay(m, heat_data, vmin=5, vmax=25, opacity=0.55)
@@ -1768,7 +1776,7 @@ def render_map_html_route(
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, visible=True, opacity=0.45)
     if show_live:
-        add_live_wms_blue_group(m, visible=True, opacity=0.75)
+        add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
 
     folium.LayerControl(collapsed=True).add_to(m)
     m.get_root().html.add_child(folium.Element("""
