@@ -250,15 +250,15 @@ layout = html.Div([
                     html.Img(
                         src="/assets/team.png",
                         style={
-                            "height": "350px",
-                            "width": "auto",
+                            "height": "auto",
+                            "width": "100%",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
                         }
                     ),
                     html.A(
-                        " CLEETS-SMART is a product of the Data Science Team at CLEETS Global Centre. Lead: Dr Naeima Hamed",
+                        " CLEETS-SMART is a product of the Data Science group at CLEETS Global Centre. Lead: Dr Naeima Hamed",
                         href="https://cleets-global-center.org/",
                         target="_blank",
                     ),  
