@@ -8,30 +8,30 @@ register_page(__name__, path="/")
 
 layout = html.Div([
     # Header
-    html.Div(
-        className="header",
-        children=[
-            html.Img(
-                src="/assets/cleets_logo.png",
-                style={
-                    "height": "180px",
-                    "display": "block",
-                    "margin": "0 auto 15px auto"
-                }
-            ),
-            html.H1(
-                "CLEETS-SMART: Sustainable Mobility And Resilient Transport",
-                style={
-                    "textAlign": "center",
-                    "width": "100%",
-                    "margin": "0 auto",
-                    "display": "block",
-                    "fontSize": "80px"
-                }
-            )
-        ],
-        style={"textAlign": "center", "width": "100%"}
-    ),
+    # html.Div(
+    #     className="header",
+    #     children=[
+    #         html.Img(
+    #             src="/assets/cleets_logo.png",
+    #             style={
+    #                 "height": "180px",
+    #                 "display": "block",
+    #                 "margin": "0 auto 15px auto"
+    #             }
+    #         ),
+    #         html.H1(
+    #             "CLEETS-SMART: Sustainable Mobility And Resilient Transport",
+    #             style={
+    #                 "textAlign": "center",
+    #                 "width": "100%",
+    #                 "margin": "0 auto",
+    #                 "display": "block",
+    #                 "fontSize": "80px"
+    #             }
+    #         )
+    #     ],
+    #     style={"textAlign": "center", "width": "100%"}
+    # ),
 
     # Card container
     html.Div(
