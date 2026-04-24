@@ -16,7 +16,7 @@ layout = html.Div([
                 style={
                     "height": "180px",
                     "display": "block",
-                    "margin": "0 auto 12px auto"
+                    "margin": "0 auto 15px auto"
                 }
             ),
             html.H1(
@@ -26,7 +26,7 @@ layout = html.Div([
                     "width": "100%",
                     "margin": "0 auto",
                     "display": "block",
-                    "fontSize": "65px"
+                    "fontSize": "80px"
                 }
             )
         ],
@@ -55,8 +55,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/weather.png",
                         style={
-                            "height": "270px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -65,7 +65,7 @@ layout = html.Div([
                     html.A(
                         "A) Weather Forecast for South Wales",
                         href="/weather-forecaster",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none","fontSize": "40px"}
                     ),
                     html.P("A weather dashboard built using the Open-Meteo API.")
                 ],
@@ -76,7 +76,9 @@ layout = html.Div([
                     "backgroundColor": "#e6f7f5",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -88,8 +90,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/temp.png",
                         style={
-                            "height": "300px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -98,7 +100,7 @@ layout = html.Div([
                     html.A(
                         "B)  Climate and Emissions Visualization",
                         href="/heat-uk",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none", "fontSize": "40px"}
                     ),
                     html.P("An interactive map that visualizes UK greenhouse gas emissions and projected UK average temperature trends from 1980 to 2080.")
                 ],
@@ -109,7 +111,9 @@ layout = html.Div([
                     "backgroundColor": "#fff2e6",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -121,8 +125,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/journey.png",
                         style={
-                            "height": "300px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -131,7 +135,7 @@ layout = html.Div([
                     html.A(
                         "C) Electric Vehicle (EV) Journey Planner During Floods",
                         href="/ev-travel-planning",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none", "fontSize": "40px"}
                     ),
                     html.P("An interactive map that helps plan EV routes during flooding events. ")
                 ],
@@ -142,7 +146,9 @@ layout = html.Div([
                     "backgroundColor": "#eaf3fb",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -153,8 +159,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/thrustOne.png",
                         style={
-                            "height": "300px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -163,7 +169,7 @@ layout = html.Div([
                     html.A(
                         "D) Clean and Equitable Transportation-UK",
                         href="/thrust-one",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none", "fontSize": "40px"}
                     ),
                     html.P("EV chargers, EV Keeperships, and levels of deprivation. Exploratory analysis of the relationship between electric vehicle uptake and socioeconomic deprivation across Wales, with a focus on South Wales.")
                 ],
@@ -174,7 +180,9 @@ layout = html.Div([
                     "backgroundColor": "#eaf3fb",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -185,8 +193,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/westmidlands.png",
                         style={
-                            "height": "300px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -195,7 +203,7 @@ layout = html.Div([
                     html.A(
                         "E) West Midlands (UK) Flood and EV Monitoring",
                         href="/westmidlands",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none", "fontSize": "40px"}
                     ),
                     html.P("A dashboard that combines EV charging-point locations in the West Midlands with flood-risk layers and live flood warnings from the UK Environment Agency.")
                 ],
@@ -206,7 +214,9 @@ layout = html.Div([
                     "backgroundColor": "#fbf5ea",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -217,8 +227,8 @@ layout = html.Div([
                     html.Img(
                         src="/assets/SCOUT.png",
                         style={
-                            "height": "300px",
-                            "width": "auto",
+                            "width": "100%",
+                            "height": "auto",
                             "display": "block",
                             "margin": "0 auto 20px auto",
                             "objectFit": "contain"
@@ -228,7 +238,7 @@ layout = html.Div([
                         "F) SCOUT",
                         href="https://arcade.evl.uic.edu/scout/",
                         target="_blank",
-                        style={"fontWeight": "bold", "textDecoration": "none"}
+                        style={"fontWeight": "bold", "textDecoration": "none", "fontSize": "40px"}
                     ),
                     html.P("An Open-Access Scenario-Oriented Urban Toolkit for Decision Support. By Kazi Omar and Dr Fabio Miranda")
                 ],
@@ -239,7 +249,9 @@ layout = html.Div([
                     "backgroundColor": "#eafbf8",
                     "fontSize": "32px",
                     "width": "30%",
-                    "minWidth": "350px",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
                     "textAlign": "center"
                 }
             ),
@@ -263,16 +275,18 @@ layout = html.Div([
                         target="_blank",
                     ),  
                 ],          
-                #     style={
-                #         "border": "1px solid #cfe2f3",
-                #         "borderRadius": "12px",
-                #         "padding": "20px",
-                #         "backgroundColor": "#e6f7f5",
-                #         "fontSize": "32px",
-                #         "width": "30%",
-                #         "minWidth": "350px",
-                #         "textAlign": "center"
-                # }
+                style={
+                    "border": "1px solid #cfe2f3",
+                    "borderRadius": "12px",
+                    "padding": "20px",
+                    "backgroundColor": "#eafbf8",
+                    "fontSize": "32px",
+                    "width": "30%",
+                    "minWidth": "280px",
+                    "maxWidth": "100%",
+                    "boxSizing": "border-box",
+                    "textAlign": "center"
+                }
             )  
         ]
     )
