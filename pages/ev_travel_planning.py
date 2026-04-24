@@ -79,6 +79,33 @@ register_page(
     name="EV Travel Planning",
 )
 
+
+def back_button():
+    return html.Div(
+        children=[
+            html.A(
+                "← Back to Home",
+                href="/",
+                style={
+                    "textDecoration": "none",
+                    "fontWeight": "600",
+                    "padding": "8px 14px",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "8px",
+                    "backgroundColor": "#f8f9fa",
+                    "color": "#333",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
+                },
+            )
+        ],
+        style={
+            "position": "absolute",
+            "top": "20px",
+            "right": "30px",
+            "zIndex": "1000",
+        },
+    )
+
 # ============================================================
 # Global config
 # ============================================================
@@ -1378,6 +1405,46 @@ def add_fmfp_blue_wfs_group(fmap, bbox_lonlat, visible=True):
         except Exception:
             continue
 
+def add_live_wms_blue_group(fmap, visible=True, opacity=0.75):
+    """Render original NRW live warning/alert WMS tiles, recoloured blue.
+
+    The original live warning layer is a WMS image layer. Because its black
+    styling is baked into the server tiles, this keeps the reliable original
+    WMS source and applies a CSS filter to make the live warning tiles blue.
+    """
+    css = """
+    <style>
+      img.live-warning-blue-tile {
+        filter: invert(24%) sepia(98%) saturate(2900%) hue-rotate(190deg) brightness(95%) contrast(105%) !important;
+        opacity: 0.85 !important;
+      }
+    </style>
+    """
+    try:
+        fmap.get_root().html.add_child(folium.Element(css))
+    except Exception:
+        pass
+
+    for title, layer in LIVE_WMS.items():
+        try:
+            resolved_layers = resolve_ows_layers(layer, service="WMS") if isinstance(layer, str) else [str(layer)]
+            if not resolved_layers:
+                continue
+            WmsTileLayer(
+                url=OWS_BASE,
+                layers=",".join(resolved_layers),
+                name=f"{title} (blue WMS)",
+                fmt="image/png",
+                transparent=True,
+                opacity=opacity,
+                version="1.3.0",
+                show=visible,
+            ).add_to(fmap)
+        except Exception as e:
+            print(f"[Live WMS Blue] skipped {title}: {e}")
+            continue
+
+
 def add_base_tiles(m):
     folium.TileLayer(
         tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -1565,7 +1632,7 @@ def render_map_html_ev(
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, False, 0.45)
     if show_live:
-        add_wms_group(m, LIVE_WMS, True, 0.65)
+        add_live_wms_blue_group(m, visible=True, opacity=0.75)
 
     if heat_data:
         add_heat_overlay(m, heat_data, vmin=5, vmax=25, opacity=0.55)
@@ -1701,7 +1768,7 @@ def render_map_html_route(
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, visible=True, opacity=0.45)
     if show_live:
-        add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
+        add_live_wms_blue_group(m, visible=True, opacity=0.75)
 
     folium.LayerControl(collapsed=True).add_to(m)
     m.get_root().html.add_child(folium.Element("""
@@ -1793,6 +1860,7 @@ def build_kml(route_data: Dict[str, Any]) -> str:
 
 layout = html.Div(
     [
+        back_button(),
         html.H1(
             "C) Electric Vehicle (EV) Chargers & Flood Overlays and EV Travel Planning",
             style={"margin": "24px 7px 8px", "fontSize": "50px"},
@@ -1935,7 +2003,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                                 {"label": "Live warnings", "value": "live"},
                                 {"label": "Context", "value": "ctx"},
                             ],
-                            value=["fraw", "fmfp"],
+                            value=["fraw", "fmfp", "live"],
                             inputStyle={"marginRight": "6px"},
                         ),
                     ],

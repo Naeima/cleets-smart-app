@@ -28,6 +28,33 @@ except Exception:  # pragma: no cover
 register_page(__name__, path="/weather-forecaster")
 
 
+def back_button():
+    return html.Div(
+        children=[
+            html.A(
+                "← Back to Home",
+                href="/",
+                style={
+                    "textDecoration": "none",
+                    "fontWeight": "600",
+                    "padding": "8px 14px",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "8px",
+                    "backgroundColor": "#f8f9fa",
+                    "color": "#333",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
+                },
+            )
+        ],
+        style={
+            "position": "absolute",
+            "top": "20px",
+            "right": "30px",
+            "zIndex": "1000",
+        },
+    )
+
+
 
 
 # ============================================================
@@ -512,6 +539,7 @@ def build_weather_chart(df: pd.DataFrame) -> go.Figure:
 
 layout = html.Div(
     [
+        back_button(),
         html.H1("A) Weather Forecaster for South Wales", style={"textAlign": "center", "marginBottom": "10px"}),
         html.P(
             "Live hourly weather forecasts for Wales using Open-Meteo APIs. Data refreshes every 5 minutes.",

@@ -53,6 +53,33 @@ LSOA_LAYER = "3"
 register_page(__name__, path="/thrust-one")
 
 
+def back_button():
+    return html.Div(
+        children=[
+            html.A(
+                "← Back to Home",
+                href="/",
+                style={
+                    "textDecoration": "none",
+                    "fontWeight": "600",
+                    "padding": "8px 14px",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "8px",
+                    "backgroundColor": "#f8f9fa",
+                    "color": "#333",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
+                },
+            )
+        ],
+        style={
+            "position": "absolute",
+            "top": "20px",
+            "right": "30px",
+            "zIndex": "1000",
+        },
+    )
+
+
 
 # ---------------------------
 # Helpers
@@ -816,6 +843,7 @@ except Exception:
 
 layout = html.Div(
     [
+        back_button(),
         html.H1("D) Clean and Equitable Transportation Solutions", style={"textAlign": "center", "marginBottom": "10px"}),
         html.P(
             "Interactive map for Wales combining BEV keepership (selected quarter), WIMD 2025 deprivation ranks (by domain), and EV charging points.",

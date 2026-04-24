@@ -47,6 +47,33 @@ except Exception:
 # Dash page registration
 register_page(__name__, path="/heat-uk")
 
+
+def back_button():
+    return html.Div(
+        children=[
+            html.A(
+                "← Back to Home",
+                href="/",
+                style={
+                    "textDecoration": "none",
+                    "fontWeight": "600",
+                    "padding": "8px 14px",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "8px",
+                    "backgroundColor": "#f8f9fa",
+                    "color": "#333",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
+                },
+            )
+        ],
+        style={
+            "position": "absolute",
+            "top": "20px",
+            "right": "30px",
+            "zIndex": "1000",
+        },
+    )
+
 # ============================================================
 # 0. Heat datasets (Dafni NetCDF downloads)
 # ============================================================
@@ -131,6 +158,17 @@ GAS_FIELDS = {
     "ch4": ("CH₄", "ghg_ch4"),
     "n2o": ("N₂O", "ghg_n2o"),
 }
+
+# ============================================================
+# Map rendering / latency controls
+# ============================================================
+# Smaller iframe reduces the visible map footprint. Turning off dense value-label
+# marker layers avoids Leaflet/Folium rendering failures and materially lowers
+# callback latency. Re-enable only for focused diagnostics.
+MAP_HEIGHT = "620px"
+ENABLE_HEAT_VALUE_LABELS = 0
+ENABLE_GHG_VALUE_LABELS = 0
+ENABLE_POLICY_TARGETING = 1
 
 # ============================================================
 # 2. Map utilities
@@ -1325,7 +1363,7 @@ def add_transport_ghg_layers(
     folium.GeoJson(gj2, name="LA boundaries", style_function=style_outline).add_to(fg_outline)
     fg_outline.add_to(m)
 
-    if HAS_GPD:
+    if HAS_GPD and ENABLE_GHG_VALUE_LABELS:
         try:
             gdf0 = gpd.GeoDataFrame.from_features(gj2["features"], crs="EPSG:4326")
             gdf0[prop_field] = pd.to_numeric(gdf0[prop_field], errors="coerce")
@@ -1383,8 +1421,9 @@ def build_map(
     # Heat (background)
     try:
         heat = load_heat_field(decade_label)
-        add_heat_overlay(m, heat, opacity=0.35)
-        add_temperature_value_labels(m, decade_label)
+        add_heat_overlay(m, heat, opacity=0.30)
+        if ENABLE_HEAT_VALUE_LABELS:
+            add_temperature_value_labels(m, decade_label)
     except Exception as e:
         folium.Marker(
             [lat0, lon0],
@@ -1415,7 +1454,7 @@ def build_map(
         ).add_to(m)
 
     # Policy overlays + summary (mitigation + co-benefits)
-    if gj2_for_targeting is not None:
+    if ENABLE_POLICY_TARGETING and gj2_for_targeting is not None:
         _, ghg_prop_field = GAS_FIELDS.get(ghg_gas, GAS_FIELDS["total"])
         targeting_summary = add_policy_targeting_layers(
             m,
@@ -1458,6 +1497,7 @@ def build_map(
 
 layout = html.Div(
     [
+        back_button(),
         html.H1("B) Heat + Transport GHG (Local Authorities)", style={"textAlign": "center", "marginBottom": "6px"}),
 
         dcc.Markdown(
@@ -1553,7 +1593,7 @@ layout = html.Div(
         html.Iframe(
             id="heat-map",
             srcDoc=build_map("HEAT 2020–2030", DEFAULT_GHG_YEAR, "kt", "total", "UK (centre)"),
-            style={"width": "100%", "height": "980px", "border": "1px solid #ddd", "borderRadius": "8px"},
+            style={"width": "100%", "height": MAP_HEIGHT, "border": "1px solid #ddd", "borderRadius": "8px"},
         ),
 
         html.Div(

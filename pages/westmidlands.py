@@ -48,6 +48,33 @@ except Exception:  # pragma: no cover
 # ============================================================
 register_page(__name__, path="/westmidlands", name="West Midlands Flood + EV")
 
+
+def back_button():
+    return html.Div(
+        children=[
+            html.A(
+                "← Back to Home",
+                href="/",
+                style={
+                    "textDecoration": "none",
+                    "fontWeight": "600",
+                    "padding": "8px 14px",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "8px",
+                    "backgroundColor": "#f8f9fa",
+                    "color": "#333",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
+                },
+            )
+        ],
+        style={
+            "position": "absolute",
+            "top": "20px",
+            "right": "30px",
+            "zIndex": "1000",
+        },
+    )
+
 MOBILE_STYLE = """
 * { box-sizing: border-box; }
 html { font-size: 200%; }
@@ -578,6 +605,86 @@ def _wfs_fetch_polys_union_prepared(base_url, keywords, clip_poly):
     if not geoms:
         return None
     return prep(unary_union(geoms))
+
+
+def add_blue_flood_wfs_layers(m: folium.Map, *, show: bool = True):
+    """Render EA flood model polygons as client-side blue layers.
+
+    WMS layers use the Environment Agency server styling, so their colours cannot
+    be overridden. This helper fetches the same Flood Map for Planning / RoFRS
+    geometries through WFS and draws them as Folium GeoJSON with fixed blue
+    styling, restoring the previous blue flood-layer visual effect.
+    """
+    layer_specs = [
+        (
+            "FMfP Flood Zone 3 (blue)",
+            WFS_FZ3,
+            ["zone", "flood", "3"],
+            {"fillColor": "#4FC3F7", "color": "#0277BD", "weight": 1, "fillOpacity": 0.32},
+        ),
+        (
+            "FMfP Flood Zone 2 (blue)",
+            WFS_FZ2,
+            ["zone", "flood", "2"],
+            {"fillColor": "#81D4FA", "color": "#039BE5", "weight": 1, "fillOpacity": 0.26},
+        ),
+        (
+            "FRAW / RoFRS Rivers & Sea (blue WMS)",
+            None,
+            None,
+            None,
+        ),
+    ]
+
+    # Vector blue FMfP layers from WFS.
+    for label, base_url, keywords, style in layer_specs[:2]:
+        try:
+            layers = _wfs_find_layers(base_url, keywords)
+            if not layers:
+                print(f"[WFS blue] No match for {label} using {keywords}.")
+                continue
+            geojson = _wfs_get_geojson(base_url, layers[0], WM_BBOX.bounds)
+            features = []
+            for feat in geojson.get("features", []):
+                try:
+                    geom = shape(feat.get("geometry"))
+                    if geom.is_empty:
+                        continue
+                    geom = geom.intersection(WM_BBOX)
+                    if geom.is_empty:
+                        continue
+                    feat = dict(feat)
+                    feat["geometry"] = mapping(geom)
+                    features.append(feat)
+                except Exception:
+                    continue
+            if not features:
+                continue
+            folium.GeoJson(
+                data={"type": "FeatureCollection", "features": features},
+                name=label,
+                show=show,
+                style_function=lambda _f, s=style: s,
+                highlight_function=lambda _f, s=style: {
+                    "weight": 2,
+                    "fillOpacity": min(0.60, float(s.get("fillOpacity", 0.3)) + 0.12),
+                    "color": s.get("color", "#0277BD"),
+                    "fillColor": s.get("fillColor", "#4FC3F7"),
+                },
+            ).add_to(m)
+        except Exception as e:
+            print(f"[WFS blue] Could not add {label}: {e}")
+
+    # RoFRS/FRAW is kept as WMS because EA publishes it as a styled risk layer.
+    # It remains toggleable alongside the blue FMfP layers.
+    add_ea_wms(
+        m,
+        WMS_RoFRS,
+        keywords=["risk", "river", "sea"],
+        layer_label="FRAW / RoFRS Rivers & Sea",
+        show=show,
+        opacity=0.50,
+    )
  
 def _ensure_fz_unions():
     """Compute and cache prepared unions for Flood Zone 2 and 3 within WM_BBOX."""
@@ -618,10 +725,15 @@ def build_map(selected_severities=None, floods=None):
                 continue
         water_fg.add_to(m)
 
-    # === EA WMS overlays: clearly mark flood areas ===
-    add_ea_wms(m, WMS_FZ2,           keywords=['zone','flood','2'],       layer_label="Flood Zone 2 (undefended)", show=False)
-    add_ea_wms(m, WMS_FZ3,           keywords=['zone','flood','3'],       layer_label="Flood Zone 3 (undefended)", show=False)
-    add_ea_wms(m, WMS_RoFRS,         keywords=['risk','river','sea'],     layer_label="Risk of Flooding (Rivers & Sea)", show=True, opacity=0.5)
+    # === Blue flood model overlays (restores previous FMfP/FRAW visual style) ===
+    # FMfP is drawn as blue WFS GeoJSON so the app controls the colour.
+    # FRAW/RoFRS is retained as a toggleable EA WMS layer.
+    add_blue_flood_wfs_layers(m, show=True)
+
+    # Optional EA WMS overlays remain available but are off by default, because
+    # WMS colours are server-styled and can visually obscure the blue layers.
+    add_ea_wms(m, WMS_FZ2,           keywords=['zone','flood','2'],       layer_label="Flood Zone 2 (EA WMS)", show=False)
+    add_ea_wms(m, WMS_FZ3,           keywords=['zone','flood','3'],       layer_label="Flood Zone 3 (EA WMS)", show=False)
     add_ea_wms(m, WMS_FloodWarnings, keywords=['flood','warning','area'], layer_label="Flood Warning Areas", show=False)
 
     # === Live EA Flood Risk Areas overlay (from flood-monitoring feed) ===
@@ -863,6 +975,7 @@ def initial_map_html() -> str:
 # ============================================================
 layout = html.Div(
     [
+        back_button(),
         html.H1("EV Chargers – West Midlands (Flood Zones, EA Live Areas, & Risk-Clustering)", style={"textAlign": "center"}),
         html.Div(style={"height": "6px"}),
  
