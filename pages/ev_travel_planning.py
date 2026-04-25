@@ -1911,7 +1911,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#eaf3fb",
-                        "fontSize": "18px",
+                        "fontSize": "28px",
                     },
                 ),
                 html.Div(
@@ -1938,7 +1938,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                                 "padding": "14px",
                                 "borderRadius": "10px",
                                 "backgroundColor": "#e6f7f5",
-                                "fontSize": "25px",
+                                "fontSize": "35px",
                             },
                         ),
                     ],
@@ -1947,7 +1947,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#fff2e6",
-                        "fontSize": "25px",
+                        "fontSize": "35px",
                     },
                 ),
             ],
@@ -2032,7 +2032,13 @@ These overlays provide situational awareness; **only segmentation uses the union
                     "Compute/Update zones",
                     id="btn-zones",
                     n_clicks=0,
-                    style={"height": "38px", "marginLeft": "8px"},
+                    style={
+                        "height": "46px",
+                        "marginLeft": "8px",
+                        "fontSize": "22px",
+                        "fontWeight": "600",
+                        "padding": "8px 16px",
+                    },
                 ),
             ],
             style={
@@ -2080,7 +2086,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Initial SoC"),
                         dcc.Slider(id="si", min=0.1, max=1.0, step=0.05, value=0.90),
-                        html.Div(id="si-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="90%"),
+                        html.Div(id="si-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="90%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2088,7 +2094,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Reserve SoC"),
                         dcc.Slider(id="sres", min=0.05, max=0.30, step=0.05, value=0.10),
-                        html.Div(id="sres-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="10%"),
+                        html.Div(id="sres-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="10%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2096,7 +2102,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Target SoC"),
                         dcc.Slider(id="stgt", min=0.5, max=1.0, step=0.05, value=0.80),
-                        html.Div(id="stgt-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="80%"),
+                        html.Div(id="stgt-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="80%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2140,8 +2146,29 @@ These overlays provide situational awareness; **only segmentation uses the union
 
         html.Div(
             [
-                html.Button("Optimise", id="simulate", n_clicks=0, style={"marginTop": "10px"}),
-                html.Button("Download KML", id="btn-kml", n_clicks=0, style={"marginLeft": "8px", "marginTop": "10px"}),
+                html.Button(
+                    "Optimise",
+                    id="simulate",
+                    n_clicks=0,
+                    style={
+                        "marginTop": "20px",
+                        "fontSize": "22px",
+                        "fontWeight": "600",
+                        "padding": "10px 18px",
+                    },
+                ),
+                html.Button(
+                    "Download KML",
+                    id="btn-kml",
+                    n_clicks=0,
+                    style={
+                        "marginLeft": "8px",
+                        "marginTop": "20px",
+                        "fontSize": "22px",
+                        "fontWeight": "600",
+                        "padding": "10px 18px",
+                    },
+                ),
             ],
             style={"display": "flex", "gap": "8px"},
         ),

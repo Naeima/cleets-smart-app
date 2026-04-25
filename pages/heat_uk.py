@@ -904,7 +904,7 @@ def add_left_context_panel(
     metric_label = "kt CO₂e" if ghg_metric == "kt" else "t CO₂e per capita"
 
     decision_html = """
-    <div style="margin-top:8px; font-size:13px; line-height:1.35; color:#666;">
+    <div style="margin-top:10px; font-size:18px; line-height:1.65; color:#666;">
       <div style="font-weight:900; margin-bottom:4px;">Intended decision summary</div>
 
         <li>Identify local areas (LADs) that are high on transport emissions, high on temperature exposure, or high on both, so policymakers can target action.
@@ -943,7 +943,7 @@ def add_left_context_panel(
         n_both = int(targeting_summary.get("n_both", 0))
 
         decision_html = f"""
-        <div style="margin-top:8px; font-size:13px; line-height:1.35;">
+        <div style="margin-top:8px; font-size:18px; line-height:1.35;">
           <div style="font-weight:900; margin-bottom:4px;">Intended decision summary</div>
 
           <div style="margin-top:6px;">
@@ -989,8 +989,8 @@ def add_left_context_panel(
                 max-height: 360px; overflow-y: auto;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.10);
                 font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-                font-size: 13px; line-height: 1.35;">
-      <div style="font-weight: 900; font-size: 14px; margin-bottom: 6px;">
+                font-size: 18px; line-height: 1.35;">
+      <div style="font-weight: 900; font-size: 18px; margin-bottom: 6px;">
         Data sources, modelling, and decision summary
       </div>
 
@@ -1100,7 +1100,7 @@ def add_policy_targeting_layers(
             "border: 1px solid #cfcfcf; border-radius: 10px; width: 360px;"
             "box-shadow: 0 2px 8px rgba(0,0,0,0.10);"
             "font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;"
-            "font-size: 12px; line-height: 1.35;'>"
+            "font-size: 18px; line-height: 1.65;'>"
             "<b>Targeting layers unavailable.</b><br>"
             "Reason: could not compute centroid temperatures (requires geopandas) or no valid values."
             "</div>"
@@ -1257,7 +1257,7 @@ def add_temperature_value_labels(m: folium.Map, decade_label: str) -> None:
                 html0 = (
                     f"<div style='background:{color}; color:white;"
                     "border:1px solid #222; border-radius:14px; padding:2px 7px;"
-                    "font-size:12px; font-weight:700; white-space:nowrap;"
+                    "font-size:18px; font-weight:700; white-space:nowrap;"
                     "box-shadow:0 1px 2px rgba(0,0,0,0.2)'>"
                     f"{label}</div>"
                 )
@@ -1384,7 +1384,7 @@ def add_transport_ghg_layers(
                 html0 = (
                     "<div style='background:rgba(255,255,255,0.96);"
                     "border:1.5px solid #111; border-radius:14px; padding:3px 8px;"
-                    "font-size:13px; font-weight:900; white-space:nowrap;"
+                    "font-size:18px; font-weight:900; white-space:nowrap;"
                     "box-shadow:0 1px 3px rgba(0,0,0,0.25)'>"
                     f"{txt}</div>"
                 )
@@ -1622,7 +1622,7 @@ layout = html.Div(
         **Source:** DAFNI NetCDF layers (downloaded via Google Drive in this app).  
         **Method:** at each timestep, compute the UK mean by averaging **tas** over the full grid and **ensemble_member**.  
         """,
-            style={"maxWidth": "1100px", "margin": "0 auto 8px", "fontSize": "24px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "0 auto 8px", "fontSize": "32px", "lineHeight": "1.5"},
         ),
         dcc.Graph(id="heat-daily-chart", figure=build_daily_uk_mean_chart(list(HEAT_FILES.keys()))),
 
@@ -1638,7 +1638,7 @@ layout = html.Div(
         
         Each coloured line corresponds to a different decadal dataset (e.g., 2010–2020, 2040–2050), plotted as yearly deviations from that baseline.
         """,
-            style={"maxWidth": "1100px", "margin": "18px auto 18px", "fontSize": "24px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "18px auto 18px", "fontSize": "32px", "lineHeight": "1.5"},
         ),
         dcc.Graph(id="heat-chart", figure=build_decade_separated_anomaly_chart(list(HEAT_FILES.keys()))),
 
@@ -1654,7 +1654,7 @@ layout = html.Div(
         
         **Summary:** It takes those yearly “above/below baseline” values across the selected decadal datasets, averages them into one mean line per year, and then shows how that mean compares to 1.5°C and 2.0°C reference lines (the Paris Agreement thresholds).
         """,
-            style={"maxWidth": "1100px", "margin": "18px auto 28px", "fontSize": "24px", "lineHeight": "1.5"},
+            style={"maxWidth": "1100px", "margin": "18px auto 28px", "fontSize": "32px", "lineHeight": "1.5"},
                 ),
         dcc.Graph(id="paris-chart", figure=build_paris_targets_chart(list(HEAT_FILES.keys()))),
     ]

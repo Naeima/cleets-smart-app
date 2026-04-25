@@ -345,7 +345,7 @@ def temp_div_icon(temp_c: Optional[float], selected: bool = False) -> folium.Div
         border:{ring};
         box-shadow: 0 2px 6px rgba(0,0,0,0.25);
         font-weight:700;
-        font-size:13px;
+        font-size:18px;
         color:#111;
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
     ">{val}</div>
@@ -474,7 +474,7 @@ def build_weather_map(
     <div style="position: fixed; bottom: 18px; left: 18px; z-index:9999;
                 background: white; padding: 10px 12px; border: 1px solid #ccc;
                 border-radius: 8px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-                font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.15);">
+                font-size: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.15);">
       <b>Temperature marker colours</b><br>
       <div style="margin-top:6px;">
         <span style="display:inline-block;width:10px;height:10px;background:#1f78b4;border-radius:2px;"></span> ≤ 0°C
@@ -528,6 +528,10 @@ def build_weather_chart(df: pd.DataFrame) -> go.Figure:
             overlaying="y",
             side="right",
             range=[0, 100],
+        ),
+        xaxis=dict(
+            tickfont=dict(size=24),
+            tickangle=0
         ),
     )
     return fig
