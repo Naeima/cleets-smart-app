@@ -125,12 +125,12 @@ HEAT_TS_COLORS = {
 }
 
 TS_FONT_STYLE = {
-    "base": 18,
-    "title": 24,
-    "axis_title": 20,
-    "ticks": 16,
-    "legend": 16,
-    "hover": 16,
+    "base": 28,
+    "title": 30,
+    "axis_title": 28,
+    "ticks": 26,     
+    "legend": 26,    
+    "hover": 22,
 }
 
 
@@ -1425,14 +1425,7 @@ def build_map(
         if ENABLE_HEAT_VALUE_LABELS:
             add_temperature_value_labels(m, decade_label)
     except Exception as e:
-        folium.Marker(
-            [lat0, lon0],
-            icon=folium.DivIcon(
-                html="<div style='background:#f8d7da;border:1px solid #dc3545;"
-                     "padding:10px;border-radius:10px;font-weight:800;'>"
-                     f"Heat layer error: {e}</div>"
-            ),
-        ).add_to(m)
+        print(f"Heat layer error: {e}")
 
     # Transport GHG (foreground)
     ghg_units = "kt CO₂e"
@@ -1444,14 +1437,7 @@ def build_map(
             choropleth_gas=str(ghg_gas),
         )
     except Exception as e:
-        folium.Marker(
-            [lat0, lon0],
-            icon=folium.DivIcon(
-                html="<div style='background:#fff3cd;border:1px solid #ffc107;"
-                     "padding:10px;border-radius:10px;font-weight:800;'>"
-                     f"Transport GHG layer error: {e}</div>"
-            ),
-        ).add_to(m)
+        print(f"Transport GHG layer error: {e}")
 
     # Policy overlays + summary (mitigation + co-benefits)
     if ENABLE_POLICY_TARGETING and gj2_for_targeting is not None:
