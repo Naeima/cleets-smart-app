@@ -182,6 +182,26 @@ def parse_num(x):
         return np.nan
 
 
+
+
+def wimd_rank_to_decile(values_by_code: Dict[str, float]) -> Dict[str, int]:
+    """Convert WIMD ranks to ordered deprivation deciles.
+
+    Decile 1 = the most deprived 10% within the mapped geography/domain;
+    Decile 10 = the least deprived 10%. Lower WIMD ranks are more deprived.
+    The calculation uses ordinal rank position, not numeric distance between ranks.
+    """
+    clean = {k: float(v) for k, v in values_by_code.items() if v is not None and np.isfinite(v)}
+    if not clean:
+        return {}
+    ordered = sorted(clean.items(), key=lambda kv: kv[1])
+    n = len(ordered)
+    out: Dict[str, int] = {}
+    for i, (code, _rank_value) in enumerate(ordered, start=1):
+        decile = int(np.ceil(i * 10 / n))
+        out[code] = max(1, min(10, decile))
+    return out
+
 def arcgis_pjson(url: str) -> dict:
     r = requests.get(url, params={"f": "pjson"}, timeout=60)
     r.raise_for_status()
@@ -616,34 +636,37 @@ def build_thrust_one_map(
     from shapely.geometry import shape as _shape  # avoid any shadowing
 
     for dom in domains_sorted:
-        val_by_lad = domain_value_by_code[dom]
-        dmini = pd.DataFrame({"Area code": list(val_by_lad.keys()), "val": list(val_by_lad.values())})
+        rank_by_code = domain_value_by_code[dom]
+        decile_by_code = wimd_rank_to_decile(rank_by_code)
+        dmini = pd.DataFrame({"Area code": list(decile_by_code.keys()), "decile": list(decile_by_code.values())})
 
         show_this = (default_wimd_domain is not None and str(dom).strip().lower() == str(default_wimd_domain).strip().lower())
 
         folium.Choropleth(
             geo_data=gj,
             data=dmini,
-            columns=["Area code", "val"],
+            columns=["Area code", "decile"],
             key_on=f"feature.properties.{geo_code_field}",
-            name=f"WIMD {dom} (choropleth)",
-            fill_color="BuGn",
-            fill_opacity=0.14,
-            line_color="#6baed6",
+            name=f"WIMD {dom} decile (1=most deprived, 10=least)",
+            fill_color="RdYlGn",
+            fill_opacity=0.58,
+            line_color="#636363",
             line_opacity=0.55,
-            line_weight=1.2,
-            legend_name=f"WIMD {dom} (rank; lower = more deprived)",
+            line_weight=1.1,
+            bins=list(range(1, 12)),
+            nan_fill_color="#f0f0f0",
+            legend_name=f"WIMD {dom} deprivation decile (1 = most deprived; 10 = least deprived)",
             show=show_this,
         ).add_to(m)
 
         pts = []
         for feat in gj["features"]:
             lad_code = str((feat.get("properties") or {}).get(geo_code_field))
-            v = val_by_lad.get(lad_code)
-            if v is None or not np.isfinite(v):
+            decile = decile_by_code.get(lad_code)
+            if decile is None or not np.isfinite(decile):
                 continue
             c = _shape(feat["geometry"]).centroid
-            pts.append([c.y, c.x, float(v)])
+            pts.append([c.y, c.x, float(11 - decile)])
 
         if pts:
             HeatMap(
@@ -651,9 +674,9 @@ def build_thrust_one_map(
                 radius=35,
                 blur=32,
                 max_zoom=10,
-                gradient=WIMD_GRADIENT,
+                gradient={0.00: "#ffffcc", 0.35: "#fd8d3c", 0.70: "#e31a1c", 1.00: "#800026"},
                 min_opacity=0.12,
-                name=f"WIMD {dom} (heatmap)",
+                name=f"WIMD {dom} deprivation intensity (decile heatmap)",
                 show=False,
             ).add_to(m)
 
@@ -672,14 +695,18 @@ def build_thrust_one_map(
             props["EV chargers (count)"] = f"{int(evc):,}" if (evc is not None and np.isfinite(evc)) else "NA"
 
         for dom in domains_sorted:
-            v = domain_value_by_code[dom].get(lad_code)
-            props[f"WIMD {dom} (rank)"] = f"{v:.0f}" if (v is not None and np.isfinite(v)) else "NA"
+            rank_v = domain_value_by_code[dom].get(lad_code)
+            decile_v = wimd_rank_to_decile(domain_value_by_code[dom]).get(lad_code)
+            if decile_v is not None:
+                props[f"WIMD {dom} decile"] = f"{decile_v} (rank {rank_v:.0f})" if (rank_v is not None and np.isfinite(rank_v)) else f"{decile_v}"
+            else:
+                props[f"WIMD {dom} decile"] = "NA"
 
         hover_gj["features"].append({"type": "Feature", "geometry": feat["geometry"], "properties": props})
 
         geo_label = "LSOA" if geo_level=="LSOA" else "LAD"
-    tooltip_fields = [geo_label, f"BEV ({quarter})"] + (["EV chargers (count)"] if geo_level == "LAD" else []) + [f"WIMD {dom} (rank)" for dom in domains_sorted]
-    tooltip_aliases = [f"{geo_label}:", f"BEV ({quarter}):"] + (["EV chargers:"] if geo_level == "LAD" else []) + [f"{dom} rank:" for dom in domains_sorted]
+    tooltip_fields = [geo_label, f"BEV ({quarter})"] + (["EV chargers (count)"] if geo_level == "LAD" else []) + [f"WIMD {dom} decile" for dom in domains_sorted]
+    tooltip_aliases = [f"{geo_label}:", f"BEV ({quarter}):"] + (["EV chargers:"] if geo_level == "LAD" else []) + [f"{dom} decile:" for dom in domains_sorted]
 
     folium.GeoJson(
         hover_gj,
@@ -753,7 +780,7 @@ def build_thrust_one_map(
     <script>
     (function() {
       function isWimdChoroLabel(lblText) {
-        return (lblText || '').trim().startsWith('WIMD ') && (lblText || '').includes('(choropleth)');
+        return (lblText || '').trim().startsWith('WIMD ') && (lblText || '').includes('decile');
       }
       function wire() {
         var ctl = document.querySelector('.leaflet-control-layers');
@@ -846,7 +873,7 @@ layout = html.Div(
         back_button(),
         html.H1("D) Clean and Equitable Transportation Solutions", style={"textAlign": "center", "marginBottom": "10px"}),
         html.P(
-            "Interactive map for Wales combining BEV keepership (selected quarter), WIMD 2025 deprivation ranks (by domain), and EV charging points.",
+            "Interactive map for Wales combining BEV keepership (selected quarter), WIMD deprivation deciles by domain (1 = most deprived; 10 = least deprived), and EV charging points.",
             style={"textAlign": "center"},
         ),
         html.Div(

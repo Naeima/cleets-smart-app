@@ -125,12 +125,12 @@ HEAT_TS_COLORS = {
 }
 
 TS_FONT_STYLE = {
-    "base": 28,
-    "title": 30,
-    "axis_title": 28,
-    "ticks": 26,     
-    "legend": 26,    
-    "hover": 22,
+    "base": 26,
+    "title": 26,
+    "axis_title": 24,
+    "ticks": 22,
+    "legend": 22,
+    "hover": 20,
 }
 
 
@@ -166,6 +166,9 @@ GAS_FIELDS = {
 # marker layers avoids Leaflet/Folium rendering failures and materially lowers
 # callback latency. Re-enable only for focused diagnostics.
 MAP_HEIGHT = "620px"
+# Larger vertical space for Plotly time-series charts so the y-axis is visually taller.
+TIMESERIES_PLOT_HEIGHT = 820
+TIMESERIES_GRAPH_HEIGHT = f"{TIMESERIES_PLOT_HEIGHT}px"
 ENABLE_HEAT_VALUE_LABELS = 0
 ENABLE_GHG_VALUE_LABELS = 0
 ENABLE_POLICY_TARGETING = 1
@@ -388,6 +391,7 @@ def build_daily_uk_mean_chart(selected_decades: Optional[list[str]] = None) -> g
 
     fig.update_layout(
         template="plotly_white",
+        height=TIMESERIES_PLOT_HEIGHT,
         margin=dict(l=55, r=35, t=70, b=55),
         title=dict(
             text=(
@@ -407,7 +411,7 @@ def build_daily_uk_mean_chart(selected_decades: Optional[list[str]] = None) -> g
         yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
         hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
+        legend=dict(orientation="h", y=-0.2, font=dict(size=TS_FONT_STYLE["legend"] - 4)),
     )
 
     if tickvals and ticktext:
@@ -537,6 +541,25 @@ def _continuous_anomaly_series() -> pd.Series:
 
 
 @lru_cache(maxsize=64)
+
+def get_shared_anomaly_y_range() -> list[float]:
+    """
+    Shared y-axis range for anomaly charts.
+
+    Fixed to [-1, 3] so both anomaly panels are directly comparable and the
+    Paris 1.5/2.0 °C reference lines are visually interpretable.
+    """
+    return [-1.0, 3.0]
+
+
+def first_threshold_exceedance_year(series: pd.Series, threshold: float = 1.5) -> Optional[int]:
+    """Return the first year where the supplied anomaly series reaches/exceeds threshold."""
+    s = series.dropna()
+    hit = s[s >= threshold]
+    if hit.empty:
+        return None
+    return int(hit.index[0])
+
 def decade_anomaly_series(decade_label: str) -> pd.Series:
     """
     Decade slice of the cleaned continuous anomaly series.
@@ -595,6 +618,7 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
 
     fig.update_layout(
         template="plotly_white",
+        height=TIMESERIES_PLOT_HEIGHT,
         margin=dict(l=50, r=40, t=70, b=55),
         title=dict(
             text=(
@@ -613,18 +637,21 @@ def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] =
         xaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
         yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
         hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
-        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
+        legend=dict(orientation="h", y=-0.2, font=dict(size=TS_FONT_STYLE["legend"] - 4)),
     )
     fig.update_xaxes(type="linear", tickmode="auto")
+    fig.update_yaxes(range=get_shared_anomaly_y_range())
     return fig
 
 
 
 def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> go.Figure:
     """
-    Annual anomaly series with Paris thresholds.
-    Built from monthly stitching across files; annual values require 12 months.
-    If selected_decades is provided, restrict to the union of those decade ranges.
+    Paris-threshold chart using smoothed annual anomalies.
+
+    The raw annual anomaly is shown only as a faint context line. The 10-year and
+    20-year centred running means are the intended interpretation lines because
+    Paris-style thresholds should not be assessed from noisy single-year values.
     """
     selected_decades = selected_decades or list(HEAT_FILES.keys())
 
@@ -641,29 +668,82 @@ def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> g
         idx = [int(y) for y in anom.index.astype(int) if int(y) in years_keep]
         anom = anom.loc[idx]
 
+    # Centred running means. min_periods avoids losing too much data at the
+    # beginning/end of the selected range while still requiring enough years to
+    # make the smoothed value meaningful.
+    anom_10yr = anom.rolling(window=10, center=True, min_periods=5).mean()
+    anom_20yr = anom.rolling(window=20, center=True, min_periods=10).mean()
+
     fig = go.Figure()
 
+    # Raw annual values are retained for transparency, but de-emphasised.
     fig.add_trace(
         go.Scatter(
             x=anom.index.astype(int),
             y=anom.values,
             mode="lines+markers",
-            name="Annual anomaly (continuous)",
-            line=dict(width=3),
-            hovertemplate="Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
+            name="Annual anomaly (raw; context only)",
+            line=dict(width=1, color="rgba(120,120,120,0.45)"),
+            marker=dict(size=5, color="rgba(120,120,120,0.45)"),
+            hovertemplate="Year: %{x}<br>Raw ΔT: %{y:.2f} °C<extra></extra>",
         )
     )
+
+    fig.add_trace(
+        go.Scatter(
+            x=anom_10yr.index.astype(int),
+            y=anom_10yr.values,
+            mode="lines",
+            name="10-year running mean",
+            line=dict(width=3, color="#1f77b4"),
+            hovertemplate="Year: %{x}<br>10-year mean ΔT: %{y:.2f} °C<extra></extra>",
+            connectgaps=False,
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=anom_20yr.index.astype(int),
+            y=anom_20yr.values,
+            mode="lines",
+            name="20-year running mean (interpretation line)",
+            line=dict(width=4, color="#d62728"),
+            hovertemplate="Year: %{x}<br>20-year mean ΔT: %{y:.2f} °C<extra></extra>",
+            connectgaps=False,
+        )
+    )
+
+
+    first_15_year = first_threshold_exceedance_year(anom_20yr, threshold=1.5)
+    if first_15_year is not None:
+        first_15_value = float(anom_20yr.loc[first_15_year])
+        fig.add_vline(
+            x=first_15_year,
+            line_dash="dot",
+            annotation_text=f"First 20-year mean ≥1.5°C: {first_15_year}",
+            annotation_position="top right",
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[first_15_year],
+                y=[first_15_value],
+                mode="markers",
+                name="First 1.5°C exceedance",
+                marker=dict(size=10, color="#d62728", symbol="diamond"),
+                hovertemplate="First 20-year mean ≥1.5°C<br>Year: %{x}<br>ΔT: %{y:.2f} °C<extra></extra>",
+            )
+        )
 
     fig.add_hline(
         y=1.5,
         line_dash="dash",
-        annotation_text="1.5 °C (Paris target)",
+        annotation_text="1.5 °C reference",
         annotation_position="top left",
     )
     fig.add_hline(
         y=2.0,
         line_dash="dash",
-        annotation_text="2.0 °C (Paris upper limit)",
+        annotation_text="2.0 °C reference",
         annotation_position="top left",
     )
 
@@ -671,24 +751,27 @@ def build_paris_targets_chart(selected_decades: Optional[list[str]] = None) -> g
         title=dict(
             text=(
                 "Rise in Average Temperature Relative to Paris Agreement Targets<br>"
-                "<sup>"
+                "<sup style='font-size:70%'>"
                 "Method: monthly stitching across decadal files; annual values require 12 months; "
-                "anomalies relative to 1990–2000."
+                "anomalies relative to 1990–2000. Raw annual values are shown only for context; "
+                "interpretation should use the centred 10-year and especially 20-year running means."
                 "</sup>"
             ),
-            font=dict(size=TS_FONT_STYLE["title"]),
+            font=dict(size=TS_FONT_STYLE["title"] - 2),
         ),
         xaxis_title="Year",
         yaxis_title="Temperature Anomaly (°C relative to 1990–2000)",
         template="plotly_white",
+        height=TIMESERIES_PLOT_HEIGHT,
         margin=dict(l=55, r=35, t=70, b=55),
         font=dict(size=TS_FONT_STYLE["base"]),
         xaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
         yaxis=dict(title_font=dict(size=TS_FONT_STYLE["axis_title"]), tickfont=dict(size=TS_FONT_STYLE["ticks"])),
         hoverlabel=dict(font_size=TS_FONT_STYLE["hover"]),
-        legend=dict(orientation="h", y=-0.25, font=dict(size=TS_FONT_STYLE["legend"])),
+        legend=dict(orientation="h", y=-0.2, font=dict(size=TS_FONT_STYLE["legend"] - 4)),
     )
     fig.update_xaxes(type="linear", tickmode="auto")
+    fig.update_yaxes(range=get_shared_anomaly_y_range())
     return fig
 
 # ============================================================
@@ -1049,7 +1132,8 @@ def attach_centroid_temperature_to_geojson(gj: Dict[str, Any], decade_label: str
 
     try:
         gdf = gpd.GeoDataFrame.from_features(out["features"], crs="EPSG:4326")
-        gdf["centroid"] = gdf.geometry.centroid
+        gdf_proj = gdf.to_crs(epsg=3857)
+        gdf["centroid"] = gdf_proj.centroid.to_crs(epsg=4326)
 
         lut: dict[str, float | None] = {}
         for _, r in gdf.iterrows():
@@ -1316,7 +1400,7 @@ def add_transport_ghg_layers(
         if vmax <= vmin:
             vmax = vmin + 1.0
 
-    cmap = bcm.linear.Viridis_09.scale(vmin, vmax)
+    cmap = getattr(bcm.linear, 'Viridis_09', bcm.linear.viridis).scale(vmin, vmax)
     caption = f"Transport emissions — {display_gas} ({units}) — {year}"
     cmap.caption = caption
 
@@ -1368,7 +1452,8 @@ def add_transport_ghg_layers(
             gdf0 = gpd.GeoDataFrame.from_features(gj2["features"], crs="EPSG:4326")
             gdf0[prop_field] = pd.to_numeric(gdf0[prop_field], errors="coerce")
             gdf0 = gdf0.dropna(subset=[prop_field]).copy()
-            gdf0["centroid"] = gdf0.geometry.centroid
+            gdf0_proj = gdf0.to_crs(epsg=3857)
+            gdf0["centroid"] = gdf0_proj.centroid.to_crs(epsg=4326)
 
             fg_lab = folium.FeatureGroup(name=f"GHG: values on map — {display_gas}", show=True)
             mc = MarkerCluster(name="GHG values").add_to(fg_lab)
@@ -1572,7 +1657,7 @@ layout = html.Div(
                 "alignItems": "flex-start",
                 "flexWrap": "wrap",
                 "margin": "10px 0 12px",
-                "justifyContent": "center",
+                "justifyContent": "space-between",
             },
         ),
 
@@ -1610,7 +1695,7 @@ layout = html.Div(
         """,
             style={"maxWidth": "1100px", "margin": "0 auto 8px", "fontSize": "32px", "lineHeight": "1.5"},
         ),
-        dcc.Graph(id="heat-daily-chart", figure=build_daily_uk_mean_chart(list(HEAT_FILES.keys()))),
+        dcc.Graph(id="heat-daily-chart", figure=build_daily_uk_mean_chart(list(HEAT_FILES.keys())), style={"height": TIMESERIES_GRAPH_HEIGHT}),
 
         dcc.Markdown(
         """
@@ -1626,23 +1711,23 @@ layout = html.Div(
         """,
             style={"maxWidth": "1100px", "margin": "18px auto 18px", "fontSize": "32px", "lineHeight": "1.5"},
         ),
-        dcc.Graph(id="heat-chart", figure=build_decade_separated_anomaly_chart(list(HEAT_FILES.keys()))),
+        dcc.Graph(id="heat-chart", figure=build_decade_separated_anomaly_chart(list(HEAT_FILES.keys())), style={"height": TIMESERIES_GRAPH_HEIGHT}),
 
         html.Div(id="heat-info", style={"textAlign": "center", "marginTop": "18px", "color": "#555"}),
 
         dcc.Markdown(
         """
-        **Paris thresholds (mean anomaly).**  \\
-        
+        **Paris thresholds (smoothed anomaly).**  \\
+
         **Source:** DAFNI NetCDF layers.  \\
-        
-        **Method:** compute annual anomalies (baseline 1990–2000) for each selected decade-series, then take the mean anomaly per year; overlay 1.5°C and 2.0°C reference lines. \\
-        
-        **Summary:** It takes those yearly “above/below baseline” values across the selected decadal datasets, averages them into one mean line per year, and then shows how that mean compares to 1.5°C and 2.0°C reference lines (the Paris Agreement thresholds).
+
+        **Method:** compute annual anomalies (baseline 1990–2000), show the raw annual series faintly for context, then overlay centred 10-year and 20-year running means plus 1.5°C and 2.0°C reference lines.  \\
+
+        **Summary:** Use the 20-year running mean as the main interpretation line. The raw annual values are deliberately de-emphasised because single-year anomalies are too variable for comparison with Paris-style temperature thresholds.
         """,
             style={"maxWidth": "1100px", "margin": "18px auto 28px", "fontSize": "32px", "lineHeight": "1.5"},
                 ),
-        dcc.Graph(id="paris-chart", figure=build_paris_targets_chart(list(HEAT_FILES.keys()))),
+        dcc.Graph(id="paris-chart", figure=build_paris_targets_chart(list(HEAT_FILES.keys())), style={"height": TIMESERIES_GRAPH_HEIGHT}),
     ]
 )
 # ============================================================
