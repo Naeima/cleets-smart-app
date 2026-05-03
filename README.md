@@ -68,15 +68,7 @@ python app.py
   url     = {https://github.com/Naeima/cleets-smart-app}
 }
 ```
-
 ---
-
-## License
-
-MIT License
-
----
-
 ## Acknowledgements
 
 We acknowledge the Environment Agency, Natural Resources Wales, OpenStreetMap contributors, the Met Office, and the UK Department for Transport for providing open data essential to this work.
