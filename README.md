@@ -61,7 +61,7 @@ python app.py
 
 ```bibtex
 @software{cleets_smart_2026,
-  title   = {CLEETS-SMART: A Platform for Climate-Resilient Mobility},
+  title   = {CLEETS-SMART: Sustainable Mobility and Resilient Transport},
   author  = {Naeima et al.},
   year    = {2026},
   url     = {https://github.com/Naeima/cleets-smart-app}
