@@ -11,7 +11,13 @@ CLEETS-SMART  is a dynamic geospatial decision-support platform designed to brea
 
 CLEETS stands for Clean Energy and Equitable Transportation Solutions, while SMART refers to Sustainable Mobility and Resilient Transport. 
 
-<img width="2315" height="1096" alt="Screenshot 2026-04-26 185635" src="https://github.com/user-attachments/assets/974c6ec2-6fd8-44bb-a20b-92ef010a02f6" />
+Technically, CLEETS-SMART is a modular and scalable Python dashboard that supports transport, weather, flood-risk, and EV-planning decisions for UK regions by integrating live APIs, tabular datasets, spatial layers, and interactive map/chart interfaces.
+
+<img width="857" height="283" alt="image" src="https://github.com/user-attachments/assets/6020dfd0-2437-4476-9a9c-b9fb686ea8be" />
+
+<img width="854" height="326" alt="image" src="https://github.com/user-attachments/assets/e81c7620-0aa7-4afe-b0d9-b5b4fb74e5f2" />
+
+
 
 
 ## System Architecture
