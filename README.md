@@ -13,9 +13,9 @@ CLEETS stands for Clean Energy and Equitable Transportation Solutions, while SMA
 
 Technically, CLEETS-SMART is a modular and scalable Python dashboard that supports transport, weather, flood-risk, and EV-planning decisions for UK regions by integrating live APIs, tabular datasets, spatial layers, and interactive map/chart interfaces.
 
-<img width="1057" height="483" alt="image" src="https://github.com/user-attachments/assets/6020dfd0-2437-4476-9a9c-b9fb686ea8be" />
+<img width="1057" height="283" alt="image" src="https://github.com/user-attachments/assets/6020dfd0-2437-4476-9a9c-b9fb686ea8be" />
 
-<img width="1057" height="426" alt="image" src="https://github.com/user-attachments/assets/e81c7620-0aa7-4afe-b0d9-b5b4fb74e5f2" />
+<img width="1057" height="226" alt="image" src="https://github.com/user-attachments/assets/e81c7620-0aa7-4afe-b0d9-b5b4fb74e5f2" />
 
 
 
