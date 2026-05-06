@@ -576,9 +576,6 @@ def decade_anomaly_series(decade_label: str) -> pd.Series:
 
 # --------------------------------------------------------------------------------
 
-
-
-
 def build_decade_separated_anomaly_chart(selected_decades: Optional[list[str]] = None) -> go.Figure:
     selected_decades = selected_decades or list(HEAT_FILES.keys())
     fig = go.Figure()

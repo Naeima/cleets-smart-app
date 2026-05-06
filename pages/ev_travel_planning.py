@@ -341,8 +341,14 @@ DEFAULT_POWER_KW = 50.0
 BASE_RISK_PENALTY_PER_KM = 60.0
 EXTREME_RISK_PENALTY_PER_KM = 240.0
 EXTREME_BUFFER_M = 60.0
-MAX_GRAPH_BBOX_DEG = 1.0
+MAX_GRAPH_BBOX_DEG = 1.25
 ROUTE_BUFFER_M = 30
+
+# Full optimisation can legitimately need longer than Dash's original
+# hard-coded demo budget when OSMnx has to build a fresh graph. These can be
+# overridden without editing code, e.g. ONS_GRAPH_BUILD_TIMEOUT=180.
+GRAPH_BUILD_TIMEOUT = float(os.getenv("ONS_GRAPH_BUILD_TIMEOUT", "120"))
+ROUTE_CALLBACK_TIMEOUT = float(os.getenv("ONS_ROUTE_CALLBACK_TIMEOUT", "180"))
 
 ZONE_COLORS = {
     "Zone 3": "#D32F2F",
@@ -989,7 +995,7 @@ def rcsp_optimize(
     flood_union_m,
     extreme: bool = False,
     risk_penalty_per_km: Optional[float] = None,
-    max_seconds: float = 10.0,
+    max_seconds: float = 30.0,
     soc_step: Optional[float] = None,
 ):
     if not HAS_OSMNX:
@@ -1009,7 +1015,11 @@ def rcsp_optimize(
     south, north = minlat - pad, maxlat + pad
     west, east = minlon - pad, maxlon + pad
 
-    use_point_graph = (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG or diag_km > 30.0
+    # Prefer a continuous bounding-box graph whenever the bbox is still manageable.
+    # The previous diag_km > 30 switch composed two small endpoint graphs; for
+    # South Wales journeys this often left the middle corridor disconnected and
+    # produced a false "No feasible RCSP solution".
+    use_point_graph = (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG
     mode_tag = "two_points" if use_point_graph else "bbox"
     proc_path = _processed_graph_cache_path(start_lat, start_lon, end_lat, end_lon, mode_tag)
 
@@ -1032,12 +1042,16 @@ def rcsp_optimize(
     if G is None or edges is None or edges_m is None:
         stage_t0 = time.time()
         if use_point_graph:
-            G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=30000)
+            fallback_radius_m = int(max(18_000, min(75_000, (diag_km * 1000.0 / 2.0) + 12_000)))
+            G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=fallback_radius_m)
         else:
             G = _build_graph_bbox(north, south, east, west)
 
-        if time.time() - total_t0 > 20:
-            raise TimeoutError("Graph build too slow")
+        if time.time() - total_t0 > GRAPH_BUILD_TIMEOUT:
+            raise TimeoutError(
+                f"Graph build exceeded {GRAPH_BUILD_TIMEOUT:.0f}s; "
+                "try Light mode or reduce route distance."
+            )
 
         G = ox.add_edge_speeds(G)
         G = ox.add_edge_travel_times(G)
@@ -1056,7 +1070,7 @@ def rcsp_optimize(
     else:
         print(f"[rcsp_optimize] graph prep: cache hit (diag_km={diag_km:.1f}, mode={mode_tag})")
 
-    if time.time() - total_t0 > 25:
+    if time.time() - total_t0 > ROUTE_CALLBACK_TIMEOUT:
         raise TimeoutError("Route optimisation exceeded callback budget")
 
     # --- risk tag ---
@@ -1110,10 +1124,15 @@ def rcsp_optimize(
                 nid = nn(G, float(r["Longitude"]), float(r["Latitude"]))
                 p_kw = r.get("power_kW", DEFAULT_POWER_KW)
                 p_kw = float(p_kw) if pd.notna(p_kw) and float(p_kw) > 0 else DEFAULT_POWER_KW
+                label = str(r.get("AvailabilityLabel", "")).strip().lower()
+                # Treat unknown status as usable for route search. Explicitly
+                # non-operational chargers remain excluded. This avoids false
+                # infeasibility when the public dataset has missing status labels.
+                is_operational = label not in {"not operational", "offline", "out of service", "fault", "faulted"}
                 chargers[nid] = {
                     "ROW_ID": int(r["ROW_ID"]),
                     "power_kW": p_kw,
-                    "operational": str(r.get("AvailabilityLabel", "")) == "Operational",
+                    "operational": is_operational,
                 }
             except Exception:
                 continue
@@ -1197,8 +1216,16 @@ def rcsp_optimize(
                     heapq.heappush(pq, (c2, node, k2[1]))
 
     if goal is None:
+        usable_chargers = sum(1 for ch in chargers.values() if ch.get("operational"))
+        direct_km = haversine_km(start_lat, start_lon, end_lat, end_lon)
+        max_range_km = max(0.0, (init_q - reserve_q) * float(battery_kwh) / max(1e-9, float(kwh_per_km)))
         raise RuntimeError(
-            "No feasible RCSP solution (try lowering reserve/target SoC, increasing bbox pad, or using Light mode)."
+            "No feasible RCSP solution. "
+            f"Diagnostics: direct distance≈{direct_km:.1f} km; "
+            f"usable range before reserve≈{max_range_km:.1f} km; "
+            f"usable chargers snapped to graph={usable_chargers}; "
+            f"graph mode={mode_tag}; bbox size={east-west:.2f}°×{north-south:.2f}°. "
+            "Try Light mode, lower reserve SoC, reduce consumption, or increase graph coverage."
         )
 
     # --- reconstruct stops (forward order) + geometry ---
