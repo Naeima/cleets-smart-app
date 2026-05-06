@@ -82,7 +82,7 @@ layout = html.Div([
             html.Div(
                 children=[
                     html.Img(src="/assets/thrustOne.png", style=IMG_STYLE),
-                    html.A("D) Clean and Equitable Transportation-UK", href="/thrust-one", style=TITLE_STYLE),
+                    html.A("D) Clean and Equitable Transportation-UK", href="/thrust_one", style=TITLE_STYLE),
                     html.P("Explores EV uptake and socioeconomic deprivation.", style=TEXT_STYLE)
                 ],
                 style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
