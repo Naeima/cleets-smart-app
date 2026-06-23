@@ -1,5 +1,5 @@
 # ============================================================
-# CLEETS-SMART Dashboard B: Thrust One (BEV + WIMD + Charging)
+# CLEETS-SMART Dashboard D: Thrust One (Battery Electric Vehicle (EV) + WIMD + Charging)
 # ============================================================
 # Dash page that renders the Folium map from thrust_one.py in an iframe,
 # with controls similar to the Weather Forecaster dashboard.
@@ -20,6 +20,7 @@ import requests
 import folium
 from folium.plugins import HeatMap, MarkerCluster
 from branca.element import Template, MacroElement
+from shapely.geometry import shape
 
 from dash import html, dcc, Input, Output, State, callback, register_page
 
@@ -30,9 +31,9 @@ warnings.filterwarnings("ignore")
 # ---------------------------
 DATA_SOURCE = "https://drive.google.com/uc?export=download&id=1nEq37_ZILPI3GIj2QyBXfJ390iJadjur" # EV population
 DATA_SOURCE_LSOA = "https://drive.google.com/uc?export=download&id=1wM0pxGBn67vCDpLdZmeyGYZgq59IsoVU" # LSOA EV keepership
-WIMD_URL = "https://drive.google.com/uc?export=download&id=1WHn5mXXJrndHhESXDWZk_QAA9Tp4XyiC" # Income Deprivation
-CHARGE_URL = "https://drive.google.com/uc?export=download&id=1FLnVRHaKya7nKd1FgObPSeuTKV1zJ3Q_" # EV charger Count UK
-EV_COUNTS_URL = "https://drive.google.com/uc?export=download&id=1FLnVRHaKya7nKd1FgObPSeuTKV1zJ3Q_" # EV charger Count UK
+WIMD_URL = "https://drive.google.com/uc?export=download&id=1BZfi7MAKYXWJ8a2dd4BJHbOo-X5zEUIT" # WIMD replacement dataset
+CHARGE_URL = "https://drive.google.com/uc?export=download&id=1FLnVRHaKya7nKd1FgObPSeuTKV1zJ3Q_" # Electric Vehicle (EV) charger Count UK
+EV_COUNTS_URL = "https://drive.google.com/uc?export=download&id=1FLnVRHaKya7nKd1FgObPSeuTKV1zJ3Q_" # Electric Vehicle (EV) charger Count UK
 COMBINED_DATASET_URL = "https://drive.google.com/uc?export=download&id=14Mdz9M1xcIApHxawggGdxQBPnfeosF8A" # Combined dataset
 
 # ONS lookup: LSOA21 -> LTLA22 (used if WIMD is LSOA-level)
@@ -50,7 +51,7 @@ LSOA_TO_PCON_LAYER = "0"
 LAD_FS = "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Local_Authority_Districts_May_2024_Boundaries_UK_BGC/FeatureServer"
 LAD_LAYER = "0"
 
-# LSOA boundaries (England & Wales LSOA 2021 BFE)
+# Lower Layer Super Output Area (LSOA) boundaries (England & Wales LSOA 2021 BFE)
 LSOA_FS = "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/LSOA_2021_EW_BFE_V10_RUC/FeatureServer"
 LSOA_LAYER = "3"
 
@@ -211,8 +212,6 @@ def parse_num(x):
         return np.nan
 
 
-
-
 def wimd_rank_to_decile(values_by_code: Dict[str, float]) -> Dict[str, int]:
     """Convert WIMD ranks to ordered deprivation deciles.
 
@@ -230,6 +229,31 @@ def wimd_rank_to_decile(values_by_code: Dict[str, float]) -> Dict[str, int]:
         decile = int(np.ceil(i * 10 / n))
         out[code] = max(1, min(10, decile))
     return out
+
+
+def wimd_rank_to_tertile(values_by_code: Dict[str, float]) -> Dict[str, int]:
+    """Convert WIMD ranks to three deprivation tertiles.
+
+    Tertile 1 = most deprived third; Tertile 3 = least deprived third.
+    Lower WIMD ranks are treated as more deprived.
+    """
+    clean = {k: float(v) for k, v in values_by_code.items() if v is not None and np.isfinite(v)}
+    if not clean:
+        return {}
+    ordered = sorted(clean.items(), key=lambda kv: kv[1])
+    n = len(ordered)
+    out: Dict[str, int] = {}
+    for i, (code, _rank_value) in enumerate(ordered, start=1):
+        tertile = int(np.ceil(i * 3 / n))
+        out[code] = max(1, min(3, tertile))
+    return out
+
+
+def _normalise_wimd_tertile_mode(mode: Optional[str]) -> str:
+    mode_s = str(mode or "all").strip().lower()
+    if mode_s in {"1", "2", "3"}:
+        return mode_s
+    return "all"
 
 def arcgis_pjson(url: str) -> dict:
     r = requests.get(url, params={"f": "pjson"}, timeout=60)
@@ -443,7 +467,7 @@ def _first_matching_code_column(df: pd.DataFrame, pattern: str) -> Optional[str]
 
 
 def prepare_constituency_ev_counts(ev_counts_df: pd.DataFrame) -> tuple[Dict[str, float], Dict[str, str], Optional[str]]:
-    """Return EV charger counts keyed by Westminster parliamentary constituency code."""
+    """Return Electric Vehicle (EV) charger counts keyed by Westminster parliamentary constituency code."""
     evc = ev_counts_df.copy()
     evc.columns = [str(c).strip() for c in evc.columns]
 
@@ -489,7 +513,7 @@ def prepare_constituency_ev_counts(ev_counts_df: pd.DataFrame) -> tuple[Dict[str
             if vals.notna().sum() > 0:
                 candidates.append((vals.notna().sum(), col))
         if not candidates:
-            raise ValueError(f"Could not find a numeric EV charger count column. Columns: {evc.columns.tolist()}")
+            raise ValueError(f"Could not find a numeric Electric Vehicle (EV) charger count column. Columns: {evc.columns.tolist()}")
         value_col = sorted(candidates, reverse=True)[0][1]
 
     evc["__value_num"] = evc[value_col].apply(parse_num)
@@ -508,8 +532,6 @@ def prepare_constituency_ev_counts(ev_counts_df: pd.DataFrame) -> tuple[Dict[str
     if name_col is not None:
         names = evc.dropna(subset=[name_col]).drop_duplicates(code_col).set_index(code_col)[name_col].astype(str).to_dict()
     return counts, names, date_label
-
-
 
 
 @lru_cache(maxsize=4)
@@ -611,7 +633,6 @@ def available_quarters(df: pd.DataFrame) -> list[str]:
 
     return [q for q in sorted(set(qs), key=_key, reverse=True)]
 
-
 # ---------------------------
 # Downloadable combined dataset
 # ---------------------------
@@ -643,23 +664,72 @@ def _quarter_col(df: pd.DataFrame, quarter: str) -> str:
     raise ValueError(f"Quarter {quarter!r} not found. Available quarter columns: {available}")
 
 
+def _wimd_income_lsoa_standardised() -> pd.DataFrame:
+    """Return WIMD-like income/deprivation data as Welsh LSOA rows.
 
-def _income_deprivation_by_lsoa() -> pd.DataFrame:
+    Supports both the original WIMD long format:
+      Area code | Domain | Data values
+    and the replacement tertile file supplied by the user:
+      LSOA11CD | % | Deprivation[0,1] | %Tritile | DepTritile
+
+    Internally, ``income_rank`` is an ordering value where lower means more
+    deprived, preserving compatibility with the existing tertile/decile helpers.
+    """
     wimd = load_wimd_df().copy()
     wimd.columns = [str(c).strip() for c in wimd.columns]
-    required = {"Area code", "Domain", "Data values"}
-    missing = required - set(wimd.columns)
-    if missing:
-        raise ValueError(f"WIMD missing columns: {missing}. Found: {wimd.columns.tolist()}")
 
-    wimd["Area code"] = wimd["Area code"].astype(str).str.strip()
-    wimd["Domain"] = wimd["Domain"].astype(str).str.strip()
-    wimd = wimd[(wimd["Domain"].str.lower() == "income") & (wimd["Area code"].str.match(r"^W01", na=False))].copy()
-    wimd["income_rank"] = wimd["Data values"].apply(parse_num)
-    wimd = wimd.dropna(subset=["income_rank"])
-    deciles = wimd_rank_to_decile(dict(zip(wimd["Area code"], wimd["income_rank"])))
-    wimd["income_decile"] = wimd["Area code"].map(deciles)
-    return wimd[["Area code", "income_rank", "income_decile"]].rename(columns={"Area code": "LSOA"})
+    # Original long WIMD format.
+    if {"Area code", "Domain", "Data values"}.issubset(wimd.columns):
+        wimd["Area code"] = wimd["Area code"].astype(str).str.strip()
+        wimd["Domain"] = wimd["Domain"].astype(str).str.strip()
+        out = wimd[(wimd["Domain"].str.lower() == "income") & (wimd["Area code"].str.match(r"^W01", na=False))].copy()
+        out["income_rank"] = out["Data values"].apply(parse_num)
+        out = out.dropna(subset=["income_rank"])
+        deciles = wimd_rank_to_decile(dict(zip(out["Area code"], out["income_rank"])))
+        tertiles = wimd_rank_to_tertile(dict(zip(out["Area code"], out["income_rank"])))
+        out["income_decile"] = out["Area code"].map(deciles)
+        out["income_tertile"] = out["Area code"].map(tertiles)
+        return out[["Area code", "income_rank", "income_decile", "income_tertile"]].rename(columns={"Area code": "LSOA"})
+
+    # Replacement wide tertile file.
+    code_col = pick_col(wimd.columns, [
+        "lsoa21cd", "lsoa11cd", "lsoa code", "lsoa_code", "area code", "geography code", "code"
+    ]) or _first_matching_code_column(wimd, r"^W01\d+")
+    value_col = pick_col(wimd.columns, [
+        "deprivation[0,1]", "deprivation", "deprivation score", "score", "%", "percent", "percentage"
+    ])
+    dep_tertile_col = pick_col(wimd.columns, ["deptritile", "deptertile", "deprivation tertile", "deprivation tritile"])
+    pct_tertile_col = pick_col(wimd.columns, ["%tritile", "%tertile", "percent tertile", "percentage tertile"])
+
+    if code_col is None or value_col is None:
+        raise ValueError(
+            "WIMD replacement file must contain an LSOA code column and a numeric deprivation column. "
+            f"Found columns: {wimd.columns.tolist()}"
+        )
+
+    out = pd.DataFrame()
+    out["LSOA"] = wimd[code_col].astype(str).str.strip()
+    out = out[out["LSOA"].str.match(r"^W01", na=False)].copy()
+    vals = wimd.loc[out.index, value_col].apply(parse_num)
+    out["deprivation_score"] = vals
+    out = out.dropna(subset=["deprivation_score"]).copy()
+
+    # The replacement score is a deprivation intensity/proportion; higher means
+    # more deprived, so negate it to keep lower = more deprived for old helpers.
+    out["income_rank"] = -out["deprivation_score"].astype(float)
+
+    tertile_col = dep_tertile_col or pct_tertile_col
+    if tertile_col:
+        out["income_tertile"] = wimd.loc[out.index, tertile_col].apply(parse_num).round().astype("Int64")
+    else:
+        out["income_tertile"] = out["LSOA"].map(wimd_rank_to_tertile(dict(zip(out["LSOA"], out["income_rank"]))))
+
+    out["income_decile"] = out["LSOA"].map(wimd_rank_to_decile(dict(zip(out["LSOA"], out["income_rank"]))))
+    return out[["LSOA", "income_rank", "income_decile", "income_tertile", "deprivation_score"]]
+
+
+def _income_deprivation_by_lsoa() -> pd.DataFrame:
+    return _wimd_income_lsoa_standardised()
 
 
 def _charger_counts_by_lsoa(lsoa_codes: list[str]) -> Dict[str, int]:
@@ -712,7 +782,7 @@ def _charger_counts_by_lsoa(lsoa_codes: list[str]) -> Dict[str, int]:
 
 
 def build_combined_dataset(quarter: str, geo_level: str = "LSOA") -> pd.DataFrame:
-    """Create an analysis-ready table combining BEV ownership, EV chargers, and income deprivation.
+    """Create an analysis-ready table combining Battery Electric Vehicle (BEV) ownership, Electric Vehicle (EV) chargers, and income deprivation.
 
     Geography options:
       - LSOA: Welsh LSOAs, spatially joined charger points, WIMD Income rank/decile.
@@ -846,10 +916,8 @@ def build_combined_dataset(quarter: str, geo_level: str = "LSOA") -> pd.DataFram
     return out[cols].sort_values(["geography", "area_code"]).reset_index(drop=True)
 
 
-
-
 def add_user_instruction_box(m: folium.Map, *, geo_level: str, quarter: str) -> None:
-    """Add a concise on-map instruction panel for non-technical users."""
+    """Add a concise top instruction panel for non-technical users."""
     geo_label = {
         "PCON": "Westminster Parliamentary Constituency",
         "LAD": "Local Authority District",
@@ -857,37 +925,83 @@ def add_user_instruction_box(m: folium.Map, *, geo_level: str, quarter: str) -> 
     }.get(str(geo_level).upper(), str(geo_level).upper())
 
     html0 = f"""
-    <div style="position: fixed; top: 18px; left: 18px; z-index: 9999;
-                width: 430px; max-height: 360px; overflow-y: auto;
-                background: rgba(255,255,255,0.94); border: 2px solid #555;
-                border-radius: 10px; padding: 12px 14px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-                font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-                font-size: 20px; line-height: 1.45;">
-      <div style="font-weight: 900; font-size: 22px; margin-bottom: 6px;">How to read this map</div>
+    <div class="map-instruction-panel">
+      <div class="map-instruction-title">How to read this map</div>
       <div><b>Geography:</b> {geo_label}</div>
       <div><b>Default layer:</b> Income deprivation decile, where 1 = most deprived and 10 = least deprived.</div>
-      <div><b>EV information:</b> hover over an area to see BEV keepership ({quarter}), EV charger count, chargers per 1,000 BEVs, and infrastructure status.</div>
-      <div><b>EV charger markers:</b> small transparent red circles show constituency-level charger counts. Toggle them in the layer control.</div>
-      <div><b>Zoom detail:</b> zoom in and enable <i>LSOA detail</i> to inspect Welsh LSOA boundaries, local BEV values, income decile, and assigned charger counts.</div>
-      <div style="margin-top: 6px; color: #555;">Use the layer control on the right to switch between policy layers.</div>
+      <div><b>Electric Vehicle (EV) information:</b> hover over an area to see Battery Electric Vehicle (BEV) keepership ({quarter}), Electric Vehicle (EV) charger count, chargers per 1,000 Battery Electric Vehicles (BEVs), and infrastructure status.</div>
+      <div><b>Electric Vehicle (EV) charger markers:</b> small transparent red circles show constituency-level charger counts. Use the left layer panel to toggle layers.</div>
+      <div><b>Zoom detail:</b> zoom in and enable <i>Lower Layer Super Output Area (LSOA) detail</i> to inspect Welsh Lower Layer Super Output Area (LSOA) boundaries, local Battery Electric Vehicle (BEV) values, income decile, and assigned charger counts.</div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(html0))
 
-
 def add_common_map_css(m: folium.Map) -> None:
-    """Consistent readable font sizes for layer control, legends, tooltips and popups."""
+    """Readable top instruction panel, left layer panel, legends, tooltips and popups."""
     css_fonts = """
 {% macro html(this, kwargs) %}
 <style>
-.leaflet-control-layers { font-size: 13px !important; }
-.leaflet-control-layers label { font-size: 13px !important; line-height: 1.2 !important; }
-.leaflet-tooltip { font-size: 16px !important; line-height: 1.35 !important; padding: 7px 9px !important; }
-.leaflet-popup-content { font-size: 15px !important; line-height: 1.35 !important; }
-.legend, .leaflet-control .legend { font-size: 13px !important; line-height: 1.2 !important; padding: 7px 8px !important; }
-.legend .caption, .leaflet-control .legend .caption { font-size: 14px !important; font-weight: 700 !important; }
-.legend-scale ul li, .leaflet-control .legend-scale ul li { font-size: 12px !important; }
+.map-instruction-panel {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    width: min(980px, calc(100% - 48px));
+    max-height: 210px;
+    overflow-y: auto;
+    background: rgba(255,255,255,0.96);
+    border: 2px solid #555;
+    border-radius: 12px;
+    padding: 12px 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.28);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 21px;
+    line-height: 1.4;
+}
+.map-instruction-title {
+    font-weight: 900;
+    font-size: 26px;
+    margin-bottom: 6px;
+}
+.leaflet-left .leaflet-control-layers {
+    margin-top: 245px !important;
+    margin-left: 18px !important;
+}
+.leaflet-control-layers {
+    width: 360px !important;
+    max-height: calc(100vh - 285px) !important;
+    overflow-y: auto !important;
+    background: rgba(255,255,255,0.96) !important;
+    border: 2px solid #555 !important;
+    border-radius: 12px !important;
+    padding: 14px 16px !important;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.28) !important;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
+    font-size: 21px !important;
+    line-height: 1.35 !important;
+}
+.leaflet-control-layers::before {
+    content: "Map layers";
+    display: block;
+    font-size: 26px;
+    font-weight: 900;
+    margin-bottom: 8px;
+}
+.leaflet-control-layers label {
+    font-size: 21px !important;
+    line-height: 1.35 !important;
+    margin-bottom: 7px !important;
+}
+.leaflet-control-layers input {
+    transform: scale(1.35);
+    margin-right: 10px !important;
+}
+.leaflet-tooltip { font-size: 21px !important; line-height: 1.35 !important; padding: 9px 11px !important; }
+.leaflet-popup-content { font-size: 19px !important; line-height: 1.35 !important; }
+.legend, .leaflet-control .legend { font-size: 18px !important; line-height: 1.25 !important; padding: 10px 12px !important; }
+.legend .caption, .leaflet-control .legend .caption { font-size: 20px !important; font-weight: 800 !important; }
+.legend-scale ul li, .leaflet-control .legend-scale ul li { font-size: 18px !important; }
 </style>
 {% endmacro %}
 """
@@ -895,9 +1009,8 @@ def add_common_map_css(m: folium.Map) -> None:
     macro_fonts._template = Template(css_fonts)
     m.get_root().add_child(macro_fonts)
 
-
 def add_lsoa_detail_layer(m: folium.Map, *, quarter: str) -> None:
-    """Add a Welsh LSOA detail layer for deep zoom inspection.
+    """Add a Welsh Lower Layer Super Output Area (LSOA) detail layer for deep zoom inspection.
 
     The layer is off by default because it is visually dense. Users can switch it
     on after zooming in to inspect local EV keepership, charger counts assigned
@@ -936,23 +1049,23 @@ def add_lsoa_detail_layer(m: folium.Map, *, quarter: str) -> None:
             dec = r.get("income_decile")
             ratio = r.get("chargers_per_1000_bev")
             props = {
-                "LSOA": name,
-                "BEV keepership": f"{int(bev):,}" if pd.notna(bev) else "Suppressed / no data",
-                "EV chargers assigned to LSOA": f"{int(chg):,}" if pd.notna(chg) else "0",
-                "Chargers per 1,000 BEVs": f"{float(ratio):.2f}" if pd.notna(ratio) else "NA",
+                "Lower Layer Super Output Area (LSOA)": name,
+                "Electric vehicle (EV) keepership": f"{int(bev):,}" if pd.notna(bev) else "Suppressed / no data",
+                "Electric vehicle (EV) chargers assigned to LSOA": f"{int(chg):,}" if pd.notna(chg) else "0",
+                "Chargers per 1,000 Battery Electric Vehicles (BEVs)": f"{float(ratio):.2f}" if pd.notna(ratio) else "NA",
                 "Income deprivation decile": f"Decile {int(dec)}" if pd.notna(dec) else "NA",
             }
             detail_gj["features"].append({"type": "Feature", "geometry": feat["geometry"], "properties": props})
 
-        fg = folium.FeatureGroup(name="LSOA detail: BEV + chargers + income", show=False)
+        fg = folium.FeatureGroup(name="Lower Layer Super Output Area (LSOA) detail: Electric vehicle (EV) + chargers + income", show=False)
         folium.GeoJson(
             detail_gj,
-            name="LSOA detail boundaries",
+            name="Lower Layer Super Output Area (LSOA) detail boundaries",
             style_function=lambda x: {"fillOpacity": 0.02, "weight": 0.7, "color": "#111111", "fillColor": "#ffffff"},
             highlight_function=lambda x: {"weight": 2.0, "color": "#000000", "fillOpacity": 0.08},
             tooltip=folium.GeoJsonTooltip(
-                fields=["LSOA", "BEV keepership", "EV chargers assigned to LSOA", "Chargers per 1,000 BEVs", "Income deprivation decile"],
-                aliases=["LSOA:", f"BEV keepership ({quarter}):", "EV chargers:", "Chargers per 1,000 BEVs:", "Income deprivation decile:"],
+                fields=["Lower Layer Super Output Area (LSOA)", "Electric vehicle (EV) keepership", "Electric Vehicle (EV) chargers assigned to LSOA", "Chargers per 1,000 Battery Electric Vehicles (BEVs)", "Income deprivation decile"],
+                aliases=["LSOA:", f"Battery Electric Vehicle (BEV) keepership ({quarter}):", "Electric Vehicle (EV) chargers:", "Chargers per 1,000 Battery Electric Vehicles (BEVs):", "Income deprivation decile:"],
                 sticky=True,
                 labels=True,
                 style=("background-color: white; color: black; font-size: 22px; font-weight: 600; "
@@ -965,7 +1078,7 @@ def add_lsoa_detail_layer(m: folium.Map, *, quarter: str) -> None:
         <div style="position: fixed; bottom: 34px; right: 34px; z-index:9999;
                     background:white; border:1px solid #777; border-radius:6px;
                     padding:8px 10px; font-size:18px; max-width:360px;">
-          LSOA detail layer could not be loaded: {str(e)}
+          Lower Layer Super Output Area (LSOA) detail layer could not be loaded: {str(e)}
         </div>
         """
         m.get_root().html.add_child(folium.Element(note))
@@ -977,13 +1090,22 @@ def build_thrust_one_map(
     default_wimd_domain: Optional[str] = "Income",
     show_charging: bool = True,
     show_centroids: bool = False,
+    wimd_tertile_mode: Optional[str] = "1",
+    selected_dataset: str = "combined",
 ) -> str:
-    from shapely.geometry import shape
+    
 
     # ---- BEV prep ----
     geo_level = (geo_level or "LAD").strip().upper()
     if geo_level not in {"LAD", "LSOA", "PCON"}:
         geo_level = "LAD"
+    wimd_tertile_mode = _normalise_wimd_tertile_mode(wimd_tertile_mode)
+    selected_dataset = str(selected_dataset or "combined").strip().lower()
+    if selected_dataset not in {"combined", "wimd", "bev", "chargers"}:
+        selected_dataset = "combined"
+    show_wimd_layer = selected_dataset in {"combined", "wimd"}
+    show_bev_layer = selected_dataset in {"combined", "bev"}
+    show_charger_layer = bool(show_charging) and selected_dataset in {"combined", "chargers"}
 
     if geo_level == "PCON":
         ev_counts_df = load_ev_counts_df().copy()
@@ -1001,7 +1123,7 @@ def build_thrust_one_map(
         income_rank_by_pcon = dict(zip(pcon_income["PCON24CD"], pcon_income["income_rank_median"]))
         income_decile_by_pcon = wimd_rank_to_decile(income_rank_by_pcon)
 
-        # Union of constituencies: charger counts, BEV keepership, and Welsh Income WIMD all remain visible where available.
+        # Union of constituencies: charger counts, Battery Electric Vehicle (BEV) keepership, and Welsh Income WIMD all remain visible where available.
         codes = sorted(set(ev_counts_by_pcon.keys()) | set(bev_by_pcon.keys()) | set(income_decile_by_pcon.keys()))
         gj, geo_code_field, geo_name_field = constituency_geojson_for_codes(tuple(codes))
 
@@ -1025,7 +1147,7 @@ def build_thrust_one_map(
             m = folium.Map(location=[54.5, -3.0], zoom_start=6, tiles=None)
 
         folium.TileLayer("cartodbpositron", name="CartoDB Positron", show=True).add_to(m)
-        folium.TileLayer("OpenStreetMap", name="OSM (default)", show=False).add_to(m)
+        folium.TileLayer("OpenStreetMap", name="OpenStreetMap (default)", show=False).add_to(m)
         folium.TileLayer("cartodbdark_matter", name="CartoDB Dark", show=False).add_to(m)
         folium.TileLayer(
             tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
@@ -1035,7 +1157,7 @@ def build_thrust_one_map(
         ).add_to(m)
 
         evcmini = pd.DataFrame({"Area code": list(ev_counts_by_pcon.keys()), "val": list(ev_counts_by_pcon.values())})
-        evc_legend = "Public EV chargers by Westminster parliamentary constituency"
+        evc_legend = "Public Electric Vehicle (EV) chargers by Westminster parliamentary constituency"
         if ev_count_date_label:
             evc_legend += f" ({ev_count_date_label})"
         folium.Choropleth(
@@ -1043,7 +1165,7 @@ def build_thrust_one_map(
             data=evcmini,
             columns=["Area code", "val"],
             key_on=f"feature.properties.{geo_code_field}",
-            name="EV chargers by parliamentary constituency",
+            name="Electric Vehicle (EV) chargers by parliamentary constituency",
             fill_color="YlOrRd",
             fill_opacity=0.42,
             line_color="#636363",
@@ -1051,7 +1173,7 @@ def build_thrust_one_map(
             line_weight=0.8,
             nan_fill_color="#f0f0f0",
             legend_name=evc_legend,
-            show=show_charging,
+            show=show_charger_layer,
         ).add_to(m)
 
         if bev_by_pcon:
@@ -1061,38 +1183,47 @@ def build_thrust_one_map(
                 data=bevmini,
                 columns=["Area code", "val"],
                 key_on=f"feature.properties.{geo_code_field}",
-                name=f"BEV keepership by LSOA 2021 ({quarter})",
+                name=f"Electric vehicle (EV) keepership by Lower Layer Super Output Area (LSOA) 2021 ({quarter})",
                 fill_color="YlGnBu",
                 fill_opacity=0.50,
                 line_color="#525252",
                 line_opacity=0.55,
                 line_weight=0.7,
                 nan_fill_color="#f0f0f0",
-                legend_name=f"BEV keepership by Westminster parliamentary constituency ({quarter}; LSOA to PCON best-fit aggregation)",
-                show=False,
+                legend_name=f"Electric vehicle (EV) keepership by Westminster parliamentary constituency ({quarter}; Lower Layer Super Output Area (LSOA) to PCON best-fit aggregation)",
+                show=show_bev_layer,
             ).add_to(m)
 
         if income_decile_by_pcon:
-            income_dmini = pd.DataFrame({
-                "Area code": list(income_decile_by_pcon.keys()),
-                "decile": list(income_decile_by_pcon.values()),
-            })
-            folium.Choropleth(
-                geo_data=gj,
-                data=income_dmini,
-                columns=["Area code", "decile"],
-                key_on=f"feature.properties.{geo_code_field}",
-                name="Income deprivation decile (1=most deprived, 10=least deprived)",
-                fill_color="RdYlGn",
-                fill_opacity=0.78,
-                line_color="#303030",
-                line_opacity=0.85,
-                line_weight=1.25,
-                bins=list(range(1, 12)),
-                nan_fill_color="#f0f0f0",
-                legend_name="Income deprivation decile (1 = most deprived; 10 = least deprived)",
-                show=True,
-            ).add_to(m)
+            income_tertile_by_pcon = wimd_rank_to_tertile(income_rank_by_pcon)
+            selected_tertile = int(wimd_tertile_mode) if wimd_tertile_mode in {"1", "2", "3"} else None
+            mode_labels = {
+                1: "Welsh Index of Multiple Deprivation (WIMD) tertile 1 — most deprived third",
+                2: "Welsh Index of Multiple Deprivation (WIMD) tertile 2 — middle third",
+                3: "Welsh Index of Multiple Deprivation (WIMD) tertile 3 — least deprived third",
+            }
+            rows = []
+            for code, tertile in income_tertile_by_pcon.items():
+                if selected_tertile is None or int(tertile) == selected_tertile:
+                    rows.append({"Area code": code, "tertile": int(tertile)})
+            income_tmini = pd.DataFrame(rows)
+            if not income_tmini.empty:
+                folium.Choropleth(
+                    geo_data=gj,
+                    data=income_tmini,
+                    columns=["Area code", "tertile"],
+                    key_on=f"feature.properties.{geo_code_field}",
+                    name=mode_labels.get(selected_tertile, "Welsh Index of Multiple Deprivation (WIMD) tertiles 1–3"),
+                    fill_color="RdYlGn",
+                    fill_opacity=0.78,
+                    line_color="#303030",
+                    line_opacity=0.85,
+                    line_weight=1.25,
+                    bins=[1, 2, 3, 4],
+                    nan_fill_color="#f0f0f0",
+                    legend_name=mode_labels.get(selected_tertile, "Welsh Index of Multiple Deprivation (WIMD) tertiles: 1 = most deprived; 3 = least deprived"),
+                    show=show_wimd_layer,
+                ).add_to(m)
 
         if bev_heat_pts:
             HeatMap(
@@ -1101,25 +1232,25 @@ def build_thrust_one_map(
                 blur=28,
                 max_zoom=8,
                 min_opacity=0.18,
-                name=f"BEV keepership intensity ({quarter})",
-                show=False,
+                name=f"Electric Vehicle (EV) keepership intensity ({quarter})",
+                show=(selected_dataset == "bev"),
             ).add_to(m)
 
-        if show_charging and charger_heat_pts:
+        if show_charger_layer and charger_heat_pts:
             HeatMap(
                 charger_heat_pts,
                 radius=25,
                 blur=30,
                 max_zoom=8,
                 min_opacity=0.18,
-                name="EV charger count intensity",
+                name="Electric Vehicle (EV) charger count intensity",
                 show=False,
             ).add_to(m)
 
-        # Explicit constituency-centroid markers for EV chargers.
+        # Explicit constituency-centroid markers for Electric Vehicle (EV) chargers.
         # These make infrastructure provision visible even when choropleth layers overlap.
-        if show_charging and ev_counts_by_pcon:
-            charger_marker_layer = folium.FeatureGroup(name="EV chargers: constituency markers", show=True)
+        if show_charger_layer and ev_counts_by_pcon:
+            charger_marker_layer = folium.FeatureGroup(name="Electric Vehicle (EV) chargers: constituency markers", show=True)
             for feat in gj.get("features", []):
                 props0 = feat.get("properties") or {}
                 code0 = str(props0.get(geo_code_field))
@@ -1137,7 +1268,7 @@ def build_thrust_one_map(
                     fill=True,
                     fill_color="#d62728",
                     fill_opacity=0.28,
-                    tooltip=f"{name0}<br>EV chargers: {int(charger_v):,}",
+                    tooltip=f"{name0}<br>Electric Vehicle (EV) chargers: {int(charger_v):,}",
                 ).add_to(charger_marker_layer)
             charger_marker_layer.add_to(m)
 
@@ -1160,6 +1291,7 @@ def build_thrust_one_map(
             if charger_v is not None and bev_v is not None and np.isfinite(charger_v) and np.isfinite(bev_v) and bev_v > 0:
                 ratio = 1000.0 * float(charger_v) / float(bev_v)
             income_decile_v = income_decile_by_pcon.get(code0)
+            income_tertile_v = wimd_rank_to_tertile(income_rank_by_pcon).get(code0)
             income_rank_v = income_rank_by_pcon.get(code0)
             if np.isfinite(ratio):
                 if ratio < 5:
@@ -1173,10 +1305,11 @@ def build_thrust_one_map(
 
             props = {
                 "Constituency": name0,
-                "EV chargers": f"{int(charger_v):,}" if (charger_v is not None and np.isfinite(charger_v)) else "NA",
-                f"BEV keepership ({quarter})": f"{int(bev_v):,}" if (bev_v is not None and np.isfinite(bev_v)) else "NA",
-                "Chargers per 1,000 BEVs": f"{ratio:.2f}" if np.isfinite(ratio) else "NA",
+                "Electric Vehicle (EV) chargers": f"{int(charger_v):,}" if (charger_v is not None and np.isfinite(charger_v)) else "NA",
+                f"Battery Electric Vehicle (BEV) keepership ({quarter})": f"{int(bev_v):,}" if (bev_v is not None and np.isfinite(bev_v)) else "NA",
+                "Chargers per 1,000 Battery Electric Vehicles (BEVs)": f"{ratio:.2f}" if np.isfinite(ratio) else "NA",
                 "Infrastructure status": infrastructure_status,
+                "Welsh Index of Multiple Deprivation (WIMD) tertile": f"Tertile {income_tertile_v}" if income_tertile_v is not None else "NA",
                 "Income deprivation decile": f"Decile {income_decile_v}" if income_decile_v is not None else "NA",
                 "Income rank median": f"{income_rank_v:,.0f}" if (income_rank_v is not None and np.isfinite(income_rank_v)) else "NA",
             }
@@ -1184,11 +1317,11 @@ def build_thrust_one_map(
 
         folium.GeoJson(
             hover_gj,
-            name="Hover (chargers + BEV ownership)",
+            name="Hover (chargers + Battery Electric Vehicle (BEV) ownership)",
             style_function=lambda x: {"fillOpacity": 0.0, "weight": 0.0, "color": "transparent"},
             tooltip=folium.GeoJsonTooltip(
-                fields=["Constituency", "EV chargers", f"BEV keepership ({quarter})", "Chargers per 1,000 BEVs", "Infrastructure status", "Income deprivation decile", "Income rank median"],
-                aliases=["Constituency:", "EV chargers:", f"BEV keepership ({quarter}):", "Chargers per 1,000 BEVs:", "Infrastructure status:", "Income deprivation decile:", "Income rank median:"],
+                fields=["Constituency", "Electric Vehicle (EV) chargers", f"Battery Electric Vehicle (BEV) keepership ({quarter})", "Chargers per 1,000 Battery Electric Vehicles (BEVs)", "Infrastructure status", "Welsh Index of Multiple Deprivation (WIMD) tertile", "Income deprivation decile", "Income rank median"],
+                aliases=["Constituency:", "Electric Vehicle (EV) chargers:", f"Battery Electric Vehicle (BEV) keepership ({quarter}):", "Chargers per 1,000 Battery Electric Vehicles (BEVs):", "Infrastructure status:", "Welsh Index of Multiple Deprivation (WIMD) tertile:", "Income deprivation decile:", "Income rank median:"],
                 style=(
                     "background-color: white; "
                     "color: black; "
@@ -1217,7 +1350,7 @@ def build_thrust_one_map(
                 if charger_v is not None and np.isfinite(charger_v):
                     parts.append(f"{int(charger_v):,} chargers")
                 if bev_v is not None and np.isfinite(bev_v):
-                    parts.append(f"{int(bev_v):,} BEVs")
+                    parts.append(f"{int(bev_v):,} Battery Electric Vehicles (BEVs)")
                 folium.Marker(
                     location=[c.y, c.x],
                     icon=folium.DivIcon(html=f"""
@@ -1245,7 +1378,7 @@ def build_thrust_one_map(
         add_user_instruction_box(m, geo_level=geo_level, quarter=quarter)
         add_common_map_css(m)
 
-        # ---- Missing-data note for suppressed BEV ownership ----
+        # ---- Missing-data note for suppressed Battery Electric Vehicle (BEV) keepership ----
         missing_css = """
 {% macro html(this, kwargs) %}
 <div style="
@@ -1263,7 +1396,7 @@ def build_thrust_one_map(
 ">
     <div style="font-weight: 700; margin-bottom: 4px;">Missing data</div>
     <div><span style="display:inline-block;width:18px;height:12px;background:#f0f0f0;border:1px solid #999;margin-right:7px;"></span>
-    Suppressed / no BEV keepership data</div>
+    Suppressed / no Battery Electric Vehicle (BEV) keepership data</div>
 </div>
 {% endmacro %}
 """
@@ -1271,7 +1404,7 @@ def build_thrust_one_map(
         missing_macro._template = Template(missing_css)
         m.get_root().add_child(missing_macro)
 
-        folium.LayerControl(collapsed=False).add_to(m)
+        folium.LayerControl(collapsed=False, position="topleft").add_to(m)
         return m._repr_html_()
 
     df = (load_bev_lsoa_df() if geo_level == "LSOA" else load_bev_lad_df()).copy()
@@ -1309,7 +1442,7 @@ def build_thrust_one_map(
     else:
         gj, geo_code_field, geo_name_field = lad_geojson_for_codes(tuple(codes))
 
-    # ---- EV charger counts by local authority (from user sheet) ----
+    # ---- Electric Vehicle (EV) charger counts by local authority (from user sheet) ----
     ev_counts_df = load_ev_counts_df().copy()
     ev_counts_df.columns = [str(c).strip() for c in ev_counts_df.columns]
     ev_counts_code_col = pick_col(ev_counts_df.columns, ["local authority code", "local_authority_code", "lad code", "lad_code"])
@@ -1356,7 +1489,7 @@ def build_thrust_one_map(
     # ---- base map + tiles ----
     m = folium.Map(location=[float(np.mean(lats)), float(np.mean(lons))], zoom_start=8, tiles=None)
     folium.TileLayer("cartodbpositron", name="CartoDB Positron", show=True).add_to(m)
-    folium.TileLayer("OpenStreetMap", name="OSM (default)", show=False).add_to(m)
+    folium.TileLayer("OpenStreetMap", name="OpenStreetMap (default)", show=False).add_to(m)
     folium.TileLayer("cartodbdark_matter", name="CartoDB Dark", show=False).add_to(m)
     folium.TileLayer(
            tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
@@ -1366,10 +1499,10 @@ def build_thrust_one_map(
            ).add_to(m)
 
 
-    # ---- EV charger counts choropleth (LAD only) ----
+    # ---- Electric Vehicle (EV) charger counts choropleth (LAD only) ----
     if ev_counts_by_lad and geo_level == "LAD":
         evcmini = pd.DataFrame({"Area code": list(ev_counts_by_lad.keys()), "val": list(ev_counts_by_lad.values())})
-        evc_legend = "Public EV chargers by local authority"
+        evc_legend = "Public Electric Vehicle (EV) chargers by local authority"
         if ev_count_date_label:
             evc_legend += f" ({ev_count_date_label})"
         folium.Choropleth(
@@ -1377,14 +1510,14 @@ def build_thrust_one_map(
             data=evcmini,
             columns=["Area code", "val"],
             key_on=f"feature.properties.{geo_code_field}",
-            name="EV chargers by local authority (choropleth)",
+            name="Electric Vehicle (EV) chargers by local authority (choropleth)",
             fill_color="YlOrRd",
             fill_opacity=0.45,
             line_color="#bdbdbd",
             line_opacity=0.7,
             line_weight=1.0,
             legend_name=evc_legend,
-            show=False,
+            show=show_charger_layer,
         ).add_to(m)
 
     # ---- BEV layer ----
@@ -1394,8 +1527,8 @@ def build_thrust_one_map(
         blur=25,
         max_zoom=10,
         min_opacity=0.25,
-        name=f"BEV Keepership heatmap ({quarter})",
-        show=True,
+        name=f"Battery Electric Vehicle (BEV) keepership heatmap ({quarter})",
+        show=show_bev_layer,
     ).add_to(m)
 
     # ---- centroid labels (optional) ----
@@ -1422,100 +1555,81 @@ def build_thrust_one_map(
             ).add_to(quarter_layer)
         quarter_layer.add_to(m)
 
-    # ---- WIMD domain values (rank) ----
-    wimd = load_wimd_df().copy()
-    req = {"Area code", "Domain", "Data values"}
-    missing = req - set(wimd.columns)
-    if missing:
-        raise ValueError(f"WIMD missing columns: {missing}. Found: {wimd.columns.tolist()}")
-
-    wimd["Area code"] = wimd["Area code"].astype(str).str.strip()
-    wimd["Domain"] = wimd["Domain"].astype(str).str.strip()
-    wimd["__value_num"] = wimd["Data values"].apply(parse_num)
-
+    # ---- WIMD domain values (standardised income/deprivation ordering) ----
+    # The current replacement WIMD file is not in the old long WIMD format.
+    # Use the schema-flexible standardiser and aggregate from LSOA where needed.
+    wimd_income = _wimd_income_lsoa_standardised().copy()
     domain_value_by_code: Dict[str, Dict[str, float]] = {}
 
     if geo_level == "LSOA":
-        wimd_lsoa = wimd[wimd["Area code"].str.match(r"^W01")].dropna(subset=["__value_num"]).copy()
-        if wimd_lsoa.empty:
-            raise ValueError("WIMD file has no usable W01 (Welsh LSOA) rows with numeric 'Data values'.")
-        for dom in sorted(wimd_lsoa["Domain"].dropna().unique().tolist()):
-            d = wimd_lsoa[wimd_lsoa["Domain"] == dom]
-            domain_value_by_code[str(dom)] = dict(zip(d["Area code"], d["__value_num"].astype(float)))
+        wimd_lsoa = wimd_income[wimd_income["LSOA"].isin(codes_set)].dropna(subset=["income_rank"]).copy()
+        domain_value_by_code["Income"] = dict(zip(wimd_lsoa["LSOA"], wimd_lsoa["income_rank"].astype(float)))
     else:
-        # LAD-direct first
-        wimd_lad_num = wimd[wimd["Area code"].isin(codes_set)].dropna(subset=["__value_num"]).copy()
-        if not wimd_lad_num.empty:
-            for dom in sorted(wimd_lad_num["Domain"].dropna().unique().tolist()):
-                d = wimd_lad_num[wimd_lad_num["Domain"] == dom]
-                domain_value_by_code[str(dom)] = dict(zip(d["Area code"], d["__value_num"].astype(float)))
-        else:
-            # LSOA-level (W01...) -> LTLA22CD aggregation
-            wimd_lsoa = wimd[wimd["Area code"].str.match(r"^W01")].dropna(subset=["__value_num"]).copy()
-            if wimd_lsoa.empty:
-                raise ValueError("WIMD file has no numeric 'Data values' for LAD codes and no usable W01 LSOA rows.")
+        lsoa_meta = arcgis_pjson(f"{LSOA_TO_LAD_FS}/{LSOA_TO_LAD_LAYER}")
+        lsoa_fields = [f["name"] for f in lsoa_meta.get("fields", [])]
 
-            lsoa_meta = arcgis_pjson(f"{LSOA_TO_LAD_FS}/{LSOA_TO_LAD_LAYER}")
-            lsoa_fields = [f["name"] for f in lsoa_meta.get("fields", [])]
+        lsoa_code_field = pick_field(lsoa_fields, ["lsoa21cd", "lsoa11cd", "lsoacd"])
+        lad_lookup_field = pick_field(lsoa_fields, ["ltla22cd", "lad22cd", "lad23cd", "lad24cd", "ladcd"])
+        if lsoa_code_field is None or lad_lookup_field is None:
+            raise ValueError(f"Couldn't infer LSOA->LTLA lookup fields. Fields include: {lsoa_fields[:40]} ...")
 
-            lsoa_code_field = pick_field(lsoa_fields, ["lsoa21cd", "lsoa11cd", "lsoacd"])
-            lad_lookup_field = pick_field(lsoa_fields, ["ltla22cd", "lad22cd", "lad23cd", "lad24cd", "ladcd"])
-            if lsoa_code_field is None or lad_lookup_field is None:
-                raise ValueError(f"Couldn't infer LSOA->LTLA lookup fields. Fields include: {lsoa_fields[:40]} ...")
+        lookup = arcgis_query_table(
+            LSOA_TO_LAD_FS,
+            LSOA_TO_LAD_LAYER,
+            where=f"{lsoa_code_field} LIKE 'W01%'",
+            out_fields=",".join([lsoa_code_field, lad_lookup_field]),
+        )
+        lookup[lsoa_code_field] = lookup[lsoa_code_field].astype(str).str.strip()
+        lookup[lad_lookup_field] = lookup[lad_lookup_field].astype(str).str.strip()
 
-            where = f"{lsoa_code_field} LIKE 'W01%'"
-            lookup = arcgis_query_table(
-                LSOA_TO_LAD_FS,
-                LSOA_TO_LAD_LAYER,
-                where=where,
-                out_fields=",".join([lsoa_code_field, lad_lookup_field]),
-            )
-            lookup[lsoa_code_field] = lookup[lsoa_code_field].astype(str).str.strip()
-            lookup[lad_lookup_field] = lookup[lad_lookup_field].astype(str).str.strip()
+        merged = wimd_income.merge(lookup, left_on="LSOA", right_on=lsoa_code_field, how="left")
+        merged = merged.dropna(subset=[lad_lookup_field, "income_rank"])
+        merged = merged[merged[lad_lookup_field].isin(codes_set)].copy()
+        lad_vals = merged.groupby(lad_lookup_field)["income_rank"].median()
+        domain_value_by_code["Income"] = lad_vals.to_dict()
 
-            merged = wimd_lsoa.merge(lookup, left_on="Area code", right_on=lsoa_code_field, how="left")
-            merged = merged.dropna(subset=[lad_lookup_field, "__value_num"])
-            merged = merged[merged[lad_lookup_field].isin(codes_set)].copy()
-
-            for dom, g in merged.groupby("Domain", dropna=True):
-                lad_vals = g.groupby(lad_lookup_field)["__value_num"].median()
-                domain_value_by_code[str(dom)] = lad_vals.to_dict()
-
-    # ---- WIMD layers (Income deprivation decile only) ----
-    # WIMD documentation is rank/decile oriented: lower ranks/scores indicate greater deprivation.
-    # For comparability and publication, map Income as deciles:
-    #   1 = most deprived 10%; 10 = least deprived 10%.
+    # ---- WIMD layers (Income deprivation tertile mode) ----
+    # Lower WIMD ranks/scores indicate greater deprivation.
+    # Tertile 1 = most deprived third; Tertile 3 = least deprived third.
     domains_sorted = ["Income"] if "Income" in domain_value_by_code else []
 
     for dom in domains_sorted:
         value_by_code = domain_value_by_code[dom]
-        decile_by_code = wimd_rank_to_decile(value_by_code)
-        dmini = pd.DataFrame({
-            "Area code": list(decile_by_code.keys()),
-            "decile": list(decile_by_code.values())
-        })
+        tertile_by_code = wimd_rank_to_tertile(value_by_code)
+        selected_tertile = int(wimd_tertile_mode) if wimd_tertile_mode in {"1", "2", "3"} else None
+        mode_labels = {
+            1: "Welsh Index of Multiple Deprivation (WIMD) tertile 1 — most deprived third",
+            2: "Welsh Index of Multiple Deprivation (WIMD) tertile 2 — middle third",
+            3: "Welsh Index of Multiple Deprivation (WIMD) tertile 3 — least deprived third",
+        }
+        rows = []
+        for code, tertile in tertile_by_code.items():
+            if selected_tertile is None or int(tertile) == selected_tertile:
+                rows.append({"Area code": code, "tertile": int(tertile)})
+        tmini = pd.DataFrame(rows)
 
         show_this = (
             default_wimd_domain is not None
             and str(dom).strip().lower() == str(default_wimd_domain).strip().lower()
         )
 
-        folium.Choropleth(
-            geo_data=gj,
-            data=dmini,
-            columns=["Area code", "decile"],
-            key_on=f"feature.properties.{geo_code_field}",
-            name="Income deprivation decile (1=most deprived, 10=least deprived)",
-            fill_color="RdYlGn",
-            fill_opacity=0.62,
-            line_color="#636363",
-            line_opacity=0.55,
-            line_weight=1.1,
-            bins=list(range(1, 12)),
-            nan_fill_color="#f0f0f0",
-            legend_name="Income deprivation decile (1 = most deprived; 10 = least deprived)",
-            show=show_this,
-        ).add_to(m)
+        if not tmini.empty:
+            folium.Choropleth(
+                geo_data=gj,
+                data=tmini,
+                columns=["Area code", "tertile"],
+                key_on=f"feature.properties.{geo_code_field}",
+                name=mode_labels.get(selected_tertile, "Welsh Index of Multiple Deprivation (WIMD) tertiles 1–3"),
+                fill_color="RdYlGn",
+                fill_opacity=0.62,
+                line_color="#636363",
+                line_opacity=0.55,
+                line_weight=1.1,
+                bins=[1, 2, 3, 4],
+                nan_fill_color="#f0f0f0",
+                legend_name=mode_labels.get(selected_tertile, "Welsh Index of Multiple Deprivation (WIMD) tertiles: 1 = most deprived; 3 = least deprived"),
+                show=(show_this and show_wimd_layer),
+            ).add_to(m)
 
     # ---- Hover tooltip (values only; no codes) ----
     hover_gj = {"type": "FeatureCollection", "features": []}
@@ -1526,24 +1640,26 @@ def build_thrust_one_map(
 
         props = {("LSOA" if geo_level=="LSOA" else "LAD"): lad_name}
         bev = bev_by_code.get(lad_code)
-        props[f"BEV keepership ({quarter})"] = f"{int(bev):,}" if (bev is not None and np.isfinite(bev)) else "Suppressed / no data"
+        props[f"Battery Electric Vehicle (BEV) keepership ({quarter})"] = f"{int(bev):,}" if (bev is not None and np.isfinite(bev)) else "Suppressed / no data"
         evc = ev_counts_by_lad.get(lad_code) if geo_level == "LAD" else None
         if geo_level == "LAD":
-            props["EV chargers (count)"] = f"{int(evc):,}" if (evc is not None and np.isfinite(evc)) else "NA"
+            props["Electric Vehicle (EV) chargers (count)"] = f"{int(evc):,}" if (evc is not None and np.isfinite(evc)) else "NA"
 
         for dom in domains_sorted:
+            tertile_v = wimd_rank_to_tertile(domain_value_by_code[dom]).get(lad_code)
             decile_v = wimd_rank_to_decile(domain_value_by_code[dom]).get(lad_code)
+            props[f"WIMD {dom} tertile"] = f"{tertile_v}" if tertile_v is not None else "NA"
             props[f"WIMD {dom} decile"] = f"{decile_v}" if decile_v is not None else "NA"
 
         hover_gj["features"].append({"type": "Feature", "geometry": feat["geometry"], "properties": props})
 
         geo_label = "LSOA" if geo_level=="LSOA" else "LAD"
-    tooltip_fields = [geo_label, f"BEV keepership ({quarter})"] + (["EV chargers (count)"] if geo_level == "LAD" else []) + [f"WIMD {dom} decile" for dom in domains_sorted]
-    tooltip_aliases = [f"{geo_label}:", f"BEV keepership ({quarter}):"] + (["EV chargers:"] if geo_level == "LAD" else []) + [f"{dom} decile:" for dom in domains_sorted]
+    tooltip_fields = [geo_label, f"Battery Electric Vehicle (BEV) keepership ({quarter})"] + (["Electric Vehicle (EV) chargers (count)"] if geo_level == "LAD" else []) + [f"WIMD {dom} tertile" for dom in domains_sorted] + [f"WIMD {dom} decile" for dom in domains_sorted]
+    tooltip_aliases = [f"{geo_label}:", f"Battery Electric Vehicle (BEV) keepership ({quarter}):"] + (["Electric Vehicle (EV) chargers:"] if geo_level == "LAD" else []) + [f"{dom} tertile:" for dom in domains_sorted] + [f"{dom} decile:" for dom in domains_sorted]
 
     folium.GeoJson(
         hover_gj,
-        name="Hover (BEV keepership + Income WIMD decile)",
+        name="Hover (Battery Electric Vehicle (BEV) keepership + Income WIMD decile)",
         style_function=lambda x: {"fillOpacity": 0.0, "weight": 0.0, "color": "transparent"},
         tooltip=folium.GeoJsonTooltip(
             fields=tooltip_fields,
@@ -1594,11 +1710,11 @@ def build_thrust_one_map(
 
             charging_layer.add_to(m)
 
-    # ---- Layer control (right) ----
+    # ---- Layer control (left slider panel) ----
     css = """
     {% macro html(this, kwargs) %}
     <style>
-    .leaflet-control-layers { right: 10px !important; left: auto !important; }
+    .leaflet-control-layers { }
     </style>
     {% endmacro %}
     """
@@ -1613,7 +1729,7 @@ def build_thrust_one_map(
     <script>
     (function() {
       function isWimdChoroLabel(lblText) {
-        return (lblText || '').trim().startsWith('WIMD ') && (lblText || '').includes('decile');
+        return (lblText || '').trim().startsWith('WIMD ') && ((lblText || '').includes('tertile') || (lblText || '').includes('decile'));
       }
       function wire() {
         var ctl = document.querySelector('.leaflet-control-layers');
@@ -1653,7 +1769,7 @@ def build_thrust_one_map(
     css_fonts = """
 {% macro html(this, kwargs) %}
 <style>
-/* Layer control (right panel) */
+/* Layer control (left slider panel) */
 .leaflet-control-layers {
     font-size: 13px !important;
 }
@@ -1700,16 +1816,330 @@ def build_thrust_one_map(
     add_user_instruction_box(m, geo_level=geo_level, quarter=quarter)
     add_common_map_css(m)
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    folium.LayerControl(collapsed=False, position="topleft").add_to(m)
 
     return m._repr_html_()
 
+
+# ============================================================
+# Fresh single-dataset choropleth map builder
+# ============================================================
+_DATASET_CONFIG = {
+    "ev_population": {
+        "label": "Electric vehicle population by local authority district",
+        "source": DATA_SOURCE,
+        "preferred_geography": "LAD",
+        "preferred_metric": "quarter",
+        "palette": ["#f2f7fb", "#dcecf7", "#c6dbef", "#9ecae1", "#6baed6", "#4292c6"],
+    },
+    "ev_keepership_lsoa": {
+        "label": "Battery electric vehicle keepership by Lower Layer Super Output Area",
+        "source": DATA_SOURCE_LSOA,
+        "preferred_geography": "LSOA",
+        "preferred_metric": "quarter",
+        "palette": ["#f7fcf5", "#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#41ab5d"],
+    },
+    "income_deprivation": {
+        "label": "Income deprivation dataset",
+        "source": WIMD_URL,
+        "preferred_geography": "LSOA",
+        "preferred_metric": "deprivation",
+        "palette": ["#fff7ec", "#fee8c8", "#fdd49e", "#fdbb84", "#fc8d59", "#ef6548"],
+    },
+    "charger_points": {
+        "label": "Electric vehicle charger count dataset",
+        "source": CHARGE_URL,
+        "preferred_geography": "auto",
+        "preferred_metric": "charger_count",
+        "palette": ["#f7f4f9", "#e7e1ef", "#d4b9da", "#c994c7", "#df65b0", "#dd1c77"],
+    },
+    "ev_charger_counts": {
+        "label": "Electric vehicle charger counts by area",
+        "source": EV_COUNTS_URL,
+        "preferred_geography": "auto",
+        "preferred_metric": "charger_count",
+        "palette": ["#f7f4f9", "#e7e1ef", "#d4b9da", "#c994c7", "#df65b0", "#dd1c77"],
+    },
+    "combined_dataset": {
+        "label": "Combined dataset",
+        "source": COMBINED_DATASET_URL,
+        "preferred_geography": "auto",
+        "preferred_metric": "combined",
+        "palette": ["#f7fbff", "#deebf7", "#c6dbef", "#9ecae1", "#6baed6", "#3182bd"],
+    },
+}
+
+_DATASET_OPTIONS = [{"label": cfg["label"], "value": key} for key, cfg in _DATASET_CONFIG.items()]
+
+
+def _first_regex_column(df: pd.DataFrame, pattern: str, min_hits: int = 1) -> Optional[str]:
+    for col in df.columns:
+        s = df[col].astype(str).str.strip()
+        if int(s.str.match(pattern, na=False).sum()) >= min_hits:
+            return col
+    return None
+
+
+def _detect_area_code_column(df: pd.DataFrame) -> Optional[str]:
+    code_col = pick_col(df.columns, [
+        "area_code", "area code", "geography code", "ons code", "ons_code", "code",
+        "lad24cd", "lad23cd", "lad22cd", "ladcd", "local authority code",
+        "lsoa21cd", "lsoa11cd", "lsoa code",
+        "pcon24cd", "parliamentary constituency code", "constituency code",
+    ])
+    if code_col:
+        return code_col
+    return (
+        _first_regex_column(df, r"^(E01|W01)\d+")
+        or _first_regex_column(df, r"^(E06|E07|E08|E09|W06|S12|N09)\d+")
+        or _first_regex_column(df, r"^(E14|W07|S14|N06)\d+")
+    )
+
+
+def _infer_geography_from_codes(codes: list[str], preferred: str = "auto") -> str:
+    preferred = str(preferred or "auto").upper()
+    if preferred in {"LAD", "LSOA", "PCON"}:
+        return preferred
+    sample = " ".join([str(c) for c in codes[:200]])
+    if re.search(r"\b(E01|W01)\d+", sample):
+        return "LSOA"
+    if re.search(r"\b(E14|W07|S14|N06)\d+", sample):
+        return "PCON"
+    return "LAD"
+
+
+def _boundary_geojson_for_dataset(codes: list[str], geography: str) -> tuple[dict, str, Optional[str]]:
+    clean_codes = sorted({str(c).strip() for c in codes if str(c).strip() and str(c).strip().lower() != "nan"})
+    if not clean_codes:
+        raise ValueError("No mappable geography codes were found in the selected dataset.")
+    if geography == "LSOA":
+        return lsoa_geojson_for_codes(tuple(clean_codes))
+    if geography == "PCON":
+        return constituency_geojson_for_codes(tuple(clean_codes))
+    return lad_geojson_for_codes(tuple(clean_codes))
+
+
+def _detect_area_name_column(df: pd.DataFrame) -> Optional[str]:
+    return pick_col(df.columns, [
+        "area_name", "area name", "geography", "geography name", "ons geography", "name",
+        "lad24nm", "lad23nm", "lad22nm", "ladnm", "lsoa21nm", "lsoa11nm", "pcon24nm",
+        "parliamentary constituency", "constituency", "local authority", "local authority name",
+    ])
+
+
+def _detect_value_column(df: pd.DataFrame, dataset_key: str, quarter: Optional[str]) -> str:
+    cfg = _DATASET_CONFIG[dataset_key]
+    if cfg["preferred_metric"] == "quarter" and quarter:
+        try:
+            return _quarter_col(df, quarter)
+        except Exception:
+            pass
+
+    if dataset_key == "income_deprivation":
+        col = pick_col(df.columns, [
+            "deprivation[0,1]", "deprivation", "deprivation score", "score", "income_rank",
+            "income rank", "data values", "%", "percent", "percentage", "deptritile", "%tritile",
+        ])
+        if col:
+            return col
+
+    if dataset_key in {"charger_points", "ev_charger_counts"}:
+        metric_col = pick_col(df.columns, ["key", "metric", "measure", "indicator", "variable"])
+        if metric_col:
+            filtered = df[df[metric_col].astype(str).str.lower().str.contains("charger|device|charge", na=False)].copy()
+            if not filtered.empty:
+                df = filtered
+        col = pick_col(df.columns, [
+            "value", "count", "ev chargers", "ev charger count", "number of devices", "devices",
+            "charging devices", "public charging devices", "charger_count",
+        ])
+        if col:
+            return col
+
+    if dataset_key == "combined_dataset":
+        col = pick_col(df.columns, [
+            "chargers_per_1000_bev", "chargers per 1000 bev", "charger_count", "ev chargers",
+            "bev_count", "battery electric vehicle keepership", "income_decile", "deprivation_score", "value",
+        ])
+        if col:
+            return col
+
+    code_col = _detect_area_code_column(df)
+    name_col = _detect_area_name_column(df)
+    ignored = {c for c in [code_col, name_col] if c}
+    candidates = []
+    for col in df.columns:
+        if col in ignored:
+            continue
+        vals = df[col].apply(parse_num)
+        n = int(vals.notna().sum())
+        if n > 0:
+            candidates.append((n, str(col), col))
+    if not candidates:
+        raise ValueError("No numeric metric column was found for the selected dataset.")
+    return sorted(candidates, reverse=True)[0][2]
+
+
+def _prepare_dataset_for_choropleth(dataset_key: str, quarter: Optional[str]) -> tuple[pd.DataFrame, str, str]:
+    if dataset_key not in _DATASET_CONFIG:
+        dataset_key = "ev_population"
+    cfg = _DATASET_CONFIG[dataset_key]
+    df = load_data(cfg["source"]).copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    metric_col = pick_col(df.columns, ["key", "metric", "measure", "indicator", "variable"])
+    if dataset_key in {"charger_points", "ev_charger_counts"} and metric_col:
+        filtered = df[df[metric_col].astype(str).str.lower().str.contains("charger|device|charge", na=False)].copy()
+        if not filtered.empty:
+            df = filtered
+
+    date_col = pick_col(df.columns, ["date", "period", "reference date", "month", "quarter"])
+    if dataset_key in {"charger_points", "ev_charger_counts"} and date_col:
+        date_vals = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+        if date_vals.notna().any():
+            df = df[date_vals.eq(date_vals.max())].copy()
+
+    code_col = _detect_area_code_column(df)
+    if not code_col:
+        raise ValueError("No geography-code column was found in the selected dataset.")
+    name_col = _detect_area_name_column(df)
+    value_col = _detect_value_column(df, dataset_key, quarter)
+
+    out = pd.DataFrame()
+    out["area_code"] = df[code_col].astype(str).str.strip()
+    out["area_name"] = df[name_col].astype(str).str.strip() if name_col else out["area_code"]
+    out["value"] = df[value_col].apply(parse_num)
+    out = out.dropna(subset=["area_code", "value"]).copy()
+    out = out[out["area_code"].str.match(r"^(E01|W01|E06|E07|E08|E09|W06|S12|N09|E14|W07|S14|N06)\d+", na=False)].copy()
+    if out.empty:
+        raise ValueError("The selected dataset loaded, but no rows matched supported UK geography codes with numeric values.")
+
+    # One choropleth value per area.
+    out = out.groupby("area_code", as_index=False).agg(area_name=("area_name", "first"), value=("value", "sum"))
+    geography = _infer_geography_from_codes(out["area_code"].tolist(), cfg["preferred_geography"])
+    metric_label = str(value_col)
+    return out, geography, metric_label
+
+
+def _pastel_fill_function(value_by_code: Dict[str, float], palette: list[str]):
+    values = np.array([float(v) for v in value_by_code.values() if v is not None and np.isfinite(v)], dtype=float)
+    if len(values) == 0:
+        breaks = np.array([])
+    else:
+        breaks = np.quantile(values, np.linspace(0, 1, len(palette) + 1))
+        breaks = np.unique(breaks)
+
+    def colour(code: str) -> str:
+        v = value_by_code.get(str(code))
+        if v is None or not np.isfinite(v):
+            return "#f2f2f2"
+        if len(breaks) <= 2:
+            idx = len(palette) // 2
+        else:
+            idx = int(np.searchsorted(breaks, float(v), side="right") - 1)
+            idx = max(0, min(len(palette) - 1, idx))
+        return palette[idx]
+
+    return colour
+
+
+def build_thrust_one_map(
+    quarter: str,
+    *,
+    geo_level: str = "auto",
+    default_wimd_domain: Optional[str] = "Income",
+    show_charging: bool = False,
+    show_centroids: bool = False,
+    wimd_tertile_mode: Optional[str] = "all",
+    selected_dataset: str = "ev_population",
+) -> str:
+    """Render exactly one selected source dataset as a pastel choropleth."""
+    dataset_key = str(selected_dataset or "ev_population")
+    if dataset_key not in _DATASET_CONFIG:
+        dataset_key = "ev_population"
+    cfg = _DATASET_CONFIG[dataset_key]
+
+    data, inferred_geography, metric_label = _prepare_dataset_for_choropleth(dataset_key, quarter)
+    geography = str(geo_level or "auto").upper()
+    if geography not in {"LAD", "LSOA", "PCON"}:
+        geography = inferred_geography
+
+    # Do not force an incompatible geography; use what the selected source actually contains.
+    prefixes = " ".join(data["area_code"].astype(str).head(200).tolist())
+    actual = _infer_geography_from_codes(data["area_code"].tolist(), "auto")
+    if actual != geography:
+        geography = actual
+
+    gj, geo_code_field, geo_name_field = _boundary_geojson_for_dataset(data["area_code"].tolist(), geography)
+    values = data.set_index("area_code")["value"].astype(float).to_dict()
+    names = data.set_index("area_code")["area_name"].astype(str).to_dict()
+    fill_for = _pastel_fill_function(values, cfg["palette"])
+
+    from shapely.geometry import shape
+    centroids = []
+    for feat in gj.get("features", []):
+        try:
+            c = shape(feat["geometry"]).centroid
+            centroids.append([c.y, c.x])
+        except Exception:
+            pass
+    if centroids:
+        m = folium.Map(location=[float(np.mean([c[0] for c in centroids])), float(np.mean([c[1] for c in centroids]))], zoom_start=(7 if geography != "PCON" else 6), tiles=None)
+    else:
+        m = folium.Map(location=[52.6, -3.7], zoom_start=6, tiles=None)
+    folium.TileLayer("cartodbpositron", name="Light base map", show=True).add_to(m)
+
+    features = []
+    for feat in gj.get("features", []):
+        props0 = feat.get("properties") or {}
+        code = str(props0.get(geo_code_field))
+        area_name = names.get(code) or (props0.get(geo_name_field) if geo_name_field else code) or code
+        v = values.get(code)
+        props = {
+            "Area": area_name,
+            "Dataset": cfg["label"],
+            "Metric": metric_label,
+            "Value": f"{float(v):,.2f}" if (v is not None and np.isfinite(v) and abs(float(v) - round(float(v))) > 1e-9) else (f"{int(v):,}" if v is not None and np.isfinite(v) else "No data"),
+        }
+        features.append({"type": "Feature", "geometry": feat.get("geometry"), "properties": props, "_code": code})
+
+    display_gj = {"type": "FeatureCollection", "features": features}
+    folium.GeoJson(
+        display_gj,
+        name=cfg["label"],
+        style_function=lambda feature: {
+            "fillColor": fill_for(feature.get("_code")),
+            "color": "#6f6a60",
+            "weight": 0.8,
+            "fillOpacity": 0.78,
+        },
+        highlight_function=lambda feature: {"weight": 2.0, "color": "#333333", "fillOpacity": 0.9},
+        tooltip=folium.GeoJsonTooltip(
+            fields=["Area", "Dataset", "Metric", "Value"],
+            aliases=["Area:", "Dataset:", "Metric:", "Value:"],
+            sticky=True,
+            labels=True,
+            style=("background-color:white;color:#222;font-size:15px;padding:8px;border:1px solid #777;border-radius:6px;"),
+        ),
+    ).add_to(m)
+
+    css = """
+{% macro html(this, kwargs) %}
+<style>
+.leaflet-control-attribution { font-size: 11px !important; }
+.leaflet-tooltip { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important; }
+</style>
+{% endmacro %}
+"""
+    macro = MacroElement()
+    macro._template = Template(css)
+    m.get_root().add_child(macro)
+    return m._repr_html_()
 
 # ---------------------------
 # Dash layout
 # ---------------------------
 try:
-    # Use the LSOA BEV source because this dashboard now defaults to PCON/LSOA aggregation.
     _df = load_bev_lsoa_df()
     QUARTERS = available_quarters(_df)
 except Exception:
@@ -1719,52 +2149,165 @@ if "2025 Q4" in QUARTERS:
     QUARTERS = ["2025 Q4"] + [q for q in QUARTERS if q != "2025 Q4"]
 DEFAULT_QUARTER = QUARTERS[0] if QUARTERS else None
 
+
+def _empty_map_html() -> str:
+    return folium.Map(location=[52.3, -3.8], zoom_start=7)._repr_html_()
+
+
+def _safe_build_thrust_one_map(*args, **kwargs) -> str:
+    try:
+        return build_thrust_one_map(*args, **kwargs)
+    except Exception as e:
+        msg = str(e).replace("<", "&lt;").replace(">", "&gt;")
+        return f"""
+        <html><body style='font-family:system-ui,Arial,sans-serif;padding:24px;background:#fbfaf7;'>
+        <h3>Map could not be loaded</h3>
+        <p>{msg}</p>
+        </body></html>
+        """
+
+_SIDE_CARD_STYLE = {
+    "border": "1px solid #d7c7aa",
+    "borderRadius": "14px",
+    "padding": "16px",
+    "backgroundColor": "#fbf3df",
+    "boxShadow": "0 2px 8px rgba(72, 55, 24, 0.10)",
+}
+
+_SEPARATOR_STYLE = {"height": "1px", "backgroundColor": "#dfd0b5", "margin": "14px 0"}
+
 layout = html.Div(
     [
         back_button(),
         html.Div(
             dcc.Markdown("""<style>
-            .thrust-field, .thrust-field * { font-size: 20px !important; }
-            label { font-size: 21px !important; font-weight: 600; }
-            button { font-size: 20px !important; font-weight: 600; }
+            .thrust-field, .thrust-field * { font-size: 17px !important; }
+            label { font-size: 17px !important; font-weight: 700; color: #3b3529; }
+            button { font-size: 17px !important; font-weight: 700; }
+            .t1-filter-container summary { cursor: pointer; list-style: none; font-size: 20px; font-weight: 850; color: #2f2a21; }
+            .t1-filter-container summary::-webkit-details-marker { display: none; }
+            .t1-filter-container summary::before { content: "+"; display: inline-block; width: 24px; font-weight: 900; }
+            .t1-filter-container[open] summary::before { content: "−"; }
+            .t1-note { color: #64573f; font-size: 14px; line-height: 1.35; }
             </style>""", dangerously_allow_html=True)
         ),
         html.H1("D) Clean and Equitable Transportation Solutions", style={"textAlign": "center", "marginBottom": "10px", "fontSize": "34px"}),
         html.P(
-            "Interactive map combining BEV keepership, EV charger counts, and Income deprivation decile (1 = most deprived; 10 = least deprived).",
-            style={"textAlign": "center"},
+            "Select one source dataset at a time. The map renders that dataset only as a pastel choropleth.",
+            style={"textAlign": "center", "color": "#555"},
         ),
         html.Div(
             [
-                html.Button("Download combined dataset", id="t1-download-button", n_clicks=0, style={"height": "38px"}),
-                dcc.Download(id="t1-download-data"),
+                html.Div(
+                    dcc.Loading(
+                        html.Iframe(
+                            id="t1-map",
+                            srcDoc=(_safe_build_thrust_one_map(DEFAULT_QUARTER, selected_dataset="ev_population") if DEFAULT_QUARTER else _empty_map_html()),
+                            style={"width": "100%", "height": "calc(100vh - 190px)", "minHeight": "760px", "border": "1px solid #ddd", "borderRadius": "12px"},
+                        )
+                    ),
+                    style={"minWidth": 0},
+                ),
+                html.Div(
+                    [
+                        html.Details(
+                            [
+                                html.Summary("Map filters"),
+                                html.Div(style=_SEPARATOR_STYLE),
+                                html.Label("Dataset to plot"),
+                                dcc.RadioItems(
+                                    id="t1-selected-dataset",
+                                    options=_DATASET_OPTIONS,
+                                    value="ev_population",
+                                    labelStyle={"display": "block", "margin": "9px 0", "lineHeight": "1.25"},
+                                    className="thrust-field",
+                                ),
+                                html.Div(style=_SEPARATOR_STYLE),
+                                html.Label("Quarter for vehicle datasets"),
+                                dcc.Dropdown(
+                                    id="t1-quarter",
+                                    options=[{"label": q, "value": q} for q in QUARTERS],
+                                    value=("2025 Q4" if "2025 Q4" in QUARTERS else DEFAULT_QUARTER),
+                                    clearable=False,
+                                    className="thrust-field",
+                                ),
+                                html.Div(style=_SEPARATOR_STYLE),
+                                html.Label("Boundary level"),
+                                dcc.RadioItems(
+                                    id="t1-geo-level",
+                                    options=[
+                                        {"label": "Use the dataset geography", "value": "auto"},
+                                        {"label": "Westminster Parliamentary Constituency", "value": "PCON"},
+                                        {"label": "Local Authority District", "value": "LAD"},
+                                        {"label": "Lower Layer Super Output Area", "value": "LSOA"},
+                                    ],
+                                    value="auto",
+                                    labelStyle={"display": "block", "margin": "9px 0"},
+                                    className="thrust-field",
+                                ),
+                                html.Div(className="t1-note", children="Only one dataset is shown at a time. If the chosen boundary is incompatible with the source data, the map automatically uses the dataset geography."),
+                            ],
+                            className="t1-filter-container",
+                            open=True,
+                            style=_SIDE_CARD_STYLE,
+                        ),
+                        html.Div(
+                            [
+                                html.H3("Download", style={"marginTop": 0, "color": "#2f2a21"}),
+                                html.Div(style=_SEPARATOR_STYLE),
+                                html.P("Downloads the currently selected source dataset after the same basic preparation used for the map.", className="t1-note"),
+                                html.Button("Download selected dataset", id="t1-download-button", n_clicks=0, style={"width": "100%", "padding": "10px", "borderRadius": "8px", "border": "1px solid #ad9974", "backgroundColor": "#fffaf0"}),
+                                dcc.Download(id="t1-download-data"),
+                                html.Div(id="t1-info", style={"marginTop": "12px", "fontSize": "14px", "color": "#5a503e"}),
+                            ],
+                            style={**_SIDE_CARD_STYLE, "marginTop": "14px"},
+                        ),
+                    ],
+                    style={"width": "380px", "maxWidth": "380px"},
+                ),
             ],
-            style={"textAlign": "center", "margin": "15px"},
+            style={"display": "grid", "gridTemplateColumns": "minmax(0, 1fr) 400px", "gap": "18px", "alignItems": "start", "padding": "0 16px 16px"},
         ),
-        html.Iframe(
-            id="t1-map",
-            srcDoc=(build_thrust_one_map(DEFAULT_QUARTER, geo_level="PCON", default_wimd_domain="Income", show_charging=True, show_centroids=False) if DEFAULT_QUARTER else folium.Map(location=[52.3, -3.8], zoom_start=7)._repr_html_()),
-            style={"width": "100%", "height": "1260px", "border": "none"},
-        ),
-        html.Div(id="t1-info", style={"textAlign": "center", "marginTop": "10px"}),
     ]
 )
 
+@callback(
+    Output("t1-map", "srcDoc"),
+    Output("t1-info", "children"),
+    Input("t1-selected-dataset", "value"),
+    Input("t1-quarter", "value"),
+    Input("t1-geo-level", "value"),
+)
+def update_thrust_one_map(selected_dataset, quarter, geo_level):
+    if not quarter:
+        return _empty_map_html(), "No quarter is available."
+    selected_dataset = selected_dataset or "ev_population"
+    html_str = build_thrust_one_map(
+        quarter,
+        selected_dataset=selected_dataset,
+        geo_level=geo_level or "auto",
+    )
+    dataset_label = _DATASET_CONFIG.get(selected_dataset, _DATASET_CONFIG["ev_population"])["label"]
+    return html_str, f"Showing: {dataset_label}."
 
-# Map is rendered with fixed defaults: 2025 Q4, parliamentary constituency,
-# charging points shown, centroid labels hidden. Visible controls were removed
-# to simplify the dashboard for deployment.
+
+def _selected_dataset_frame(quarter: str, geo_level: str, selected_dataset: str, wimd_tertile_mode: str = "all") -> pd.DataFrame:
+    out, geography, metric_label = _prepare_dataset_for_choropleth(selected_dataset or "ev_population", quarter)
+    out.insert(0, "geography", geography)
+    out["metric"] = metric_label
+    return out
+
+
 @callback(
     Output("t1-download-data", "data"),
     Input("t1-download-button", "n_clicks"),
+    State("t1-selected-dataset", "value"),
+    State("t1-geo-level", "value"),
+    State("t1-quarter", "value"),
     prevent_initial_call=True,
 )
-def download_combined_dataset(n_clicks):
-    quarter = "2025 Q4"
-    geo_level = "PCON"
-    try:
-        df = load_data(COMBINED_DATASET_URL)
-    except Exception:
-        df = build_combined_dataset(quarter=quarter, geo_level=geo_level)
-    filename = "ev_equity_combined_PCON_2025_Q4.csv"
+def download_selected_dataset(_n, selected_dataset, geo_level, quarter):
+    quarter = quarter or ("2025 Q4" if "2025 Q4" in QUARTERS else DEFAULT_QUARTER)
+    df = _selected_dataset_frame(quarter=quarter, geo_level=geo_level or "auto", selected_dataset=selected_dataset or "ev_population")
+    filename = f"thrust_one_{selected_dataset or 'ev_population'}.csv"
     return dcc.send_data_frame(df.to_csv, filename, index=False)
