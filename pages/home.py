@@ -18,11 +18,11 @@ IMG_STYLE = {
 TITLE_STYLE = {
     "fontWeight": "bold",
     "textDecoration": "none",
-    "fontSize": "48px"
+    "fontSize": "22px"
 }
 
 TEXT_STYLE = {
-    "fontSize": "36px"
+    "fontSize": "28px"
 }
 
 CARD_STYLE_BASE = {
@@ -63,65 +63,65 @@ layout = html.Div([
 
             html.Div(
                 children=[
-                    html.Img(src="/assets/paul.png", style=IMG_STYLE),
-                    html.A("B) Weather Forecast for South Wales", href="/Paul", style=TITLE_STYLE),
-                    html.P("Equity map", style=TEXT_STYLE)
+                    html.Img(src="/assets/temp.png", style=IMG_STYLE),
+                    html.A("B) Climate and Emissions Visualization", href="/heat-uk", style=TITLE_STYLE),
+                    html.P("An interactive map visualizing UK greenhouse gas emissions and projected temperature trends.", style=TEXT_STYLE)
                 ],
-                style={**CARD_STYLE_BASE, "backgroundColor": "#e6f7f5"}
+                style={**CARD_STYLE_BASE, "border": "1px solid #f6c28b", "backgroundColor": "#fff2e6"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/journey.png", style=IMG_STYLE),
+                    html.A("C) EV Journey Planner During Floods", href="/ev-travel-planning", style=TITLE_STYLE),
+                    html.P("Plan EV routes during flooding events.", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/thrustOne.png", style=IMG_STYLE),
+                    html.A("D) Clean and Equitable Transportation-UK", href="/thrust_one", style=TITLE_STYLE),
+                    html.P("Explores EV uptake and socioeconomic deprivation.", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/westmidlands.png", style=IMG_STYLE),
+                    html.A("E) West Midlands Flood & EV Monitoring", href="/westmidlands", style=TITLE_STYLE),
+                    html.P("Combines EV chargers locations with flood-risk data.", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#fbf5ea"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/SCOUT.png", style=IMG_STYLE),
+                    html.A("F) SCOUT", href="https://arcade.evl.uic.edu/scout/", target="_blank", style=TITLE_STYLE),
+                    html.P("Scenario-Oriented Urban Toolkit for Decision Support.", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/climategpt.png", style=IMG_STYLE),
+                    html.A("G) ClimateGPT", href="/climategpt", style=TITLE_STYLE),
+                    html.P("Conversational AI", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
+            ),
+
+            html.Div(
+                children=[
+                    html.Img(src="/assets/team.png", style=IMG_STYLE),
+                    html.A("CLEETS-SMART Data Science Group", href="https://cleets-global-center.org/", target="_blank", style=TITLE_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
             )
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/temp.png", style=IMG_STYLE),
-            #         html.A("B) Climate and Emissions Visualization", href="/heat-uk", style=TITLE_STYLE),
-            #         html.P("An interactive map visualizing UK greenhouse gas emissions and projected temperature trends.", style=TEXT_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "border": "1px solid #f6c28b", "backgroundColor": "#fff2e6"}
-            # ),
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/journey.png", style=IMG_STYLE),
-            #         html.A("C) EV Journey Planner During Floods", href="/ev-travel-planning", style=TITLE_STYLE),
-            #         html.P("Plan EV routes during flooding events.", style=TEXT_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
-            # ),
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/thrustOne.png", style=IMG_STYLE),
-            #         html.A("D) Clean and Equitable Transportation-UK", href="/thrust_one", style=TITLE_STYLE),
-            #         html.P("Explores EV uptake and socioeconomic deprivation.", style=TEXT_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
-            # ),
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/westmidlands.png", style=IMG_STYLE),
-            #         html.A("E) West Midlands Flood & EV Monitoring", href="/westmidlands", style=TITLE_STYLE),
-            #         html.P("Combines EV chargers locations with flood-risk data.", style=TEXT_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "backgroundColor": "#fbf5ea"}
-            # ),
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/SCOUT.png", style=IMG_STYLE),
-            #         html.A("F) SCOUT", href="https://arcade.evl.uic.edu/scout/", target="_blank", style=TITLE_STYLE),
-            #         html.P("Scenario-Oriented Urban Toolkit for Decision Support.", style=TEXT_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
-            # ),
-
-            # html.Div(
-            #     children=[
-            #         html.Img(src="/assets/team.png", style=IMG_STYLE),
-            #         html.A("CLEETS-SMART Data Science Group", href="https://cleets-global-center.org/", target="_blank", style=TITLE_STYLE)
-            #     ],
-            #     style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
-            # )
 
         ]
     )

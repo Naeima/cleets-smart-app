@@ -70,6 +70,7 @@ import pages.westmidlands
 import pages.heat_uk
 import pages.ev_travel_planning
 import pages.thrust_one
+import pages.climategpt
 
 app.layout = html.Div([
     dcc.Location(id="url"),
@@ -82,4 +83,4 @@ app.layout = html.Div([
 })
 
 if __name__ == "__main__":
-    app.run_server(host="0.0.0.0", port=8052, debug=False)
+    app.run(host="0.0.0.0", port=8052, debug=False)
