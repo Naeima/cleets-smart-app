@@ -82,7 +82,7 @@ layout = html.Div([
             html.Div(
                 children=[
                     html.Img(src="/assets/thrustOne.png", style=IMG_STYLE),
-                    html.A("D) Clean and Equitable Transportation-UK", href="/thrust_one", style=TITLE_STYLE),
+                    html.A("D) Clean and Equitable Transportation-UK (in-progress)", href="/equity", style=TITLE_STYLE),
                     html.P("Explores EV uptake and socioeconomic deprivation.", style=TEXT_STYLE)
                 ],
                 style={**CARD_STYLE_BASE, "backgroundColor": "#eaf3fb"}
@@ -100,7 +100,7 @@ layout = html.Div([
             html.Div(
                 children=[
                     html.Img(src="/assets/SCOUT.png", style=IMG_STYLE),
-                    html.A("F) SCOUT", href="https://arcade.evl.uic.edu/scout/", target="_blank", style=TITLE_STYLE),
+                    html.A("F) SCOUT (Under maintenance)", href="https://arcade.evl.uic.edu/scout/", target="_blank", style=TITLE_STYLE),
                     html.P("Scenario-Oriented Urban Toolkit for Decision Support.", style=TEXT_STYLE)
                 ],
                 style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
@@ -111,6 +111,15 @@ layout = html.Div([
                     html.Img(src="/assets/climategpt.png", style=IMG_STYLE),
                     html.A("G) ClimateGPT", href="/climategpt", style=TITLE_STYLE),
                     html.P("Conversational AI", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
+            ),
+            
+            html.Div(
+                children=[
+                    html.Img(src="/assets/fulong.png", style=IMG_STYLE),
+                    html.A("H) Electric-Hydrogen Transport Systems", href="https://naeima.github.io/EHTS/", target = "_blank", style=TITLE_STYLE),
+                    html.P("A Hierarchical Optimisation Framework for Integrated Electric-Hydrogen Transport Systems", style=TEXT_STYLE)
                 ],
                 style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
             ),

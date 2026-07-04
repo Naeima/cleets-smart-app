@@ -28,3 +28,15 @@ pydeck>=0.8
 
 openpyxl==3.1.5
 scikit-learn==1.4.2
+
+
+numpy>=1.23
+pandas>=1.5
+
+matplotlib>=3.7
+plotly>=5.18
+
+torch>=2.0
+tqdm>=4.66
+tensorboard>=2.14
+
