@@ -1,6 +1,6 @@
 
 # ============================================================
-# CLEETS-SMART Home Page (Adjusted)
+# CLEETS-SMART Home Page
 # ============================================================
 
 from dash import html, register_page
@@ -122,6 +122,15 @@ layout = html.Div([
                     html.P("A Hierarchical Optimisation Framework for Integrated Electric-Hydrogen Transport Systems", style=TEXT_STYLE)
                 ],
                 style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf8"}
+            ),
+            
+            html.Div(
+                children=[
+                    html.Img(src="/assets/ming.png", style=IMG_STYLE),
+                    html.A("I) Multi-Agent Electric HGV Routing and Charging Systems", href="https://ming2105.github.io/hgv-map-replay/", target = "_blank", style=TITLE_STYLE),
+                    html.P("Coordinated routing, charging, and rest scheduling for electric HGV fleets.", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eaf1fb"}
             ),
 
             html.Div(

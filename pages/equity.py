@@ -1,4 +1,4 @@
-from dash import Dash, html, dcc, Input, Output, State, ctx, callback
+from dash import Dash, html, dcc, Input, Output, State, ctx, callback, no_update
 from dash import dash_table, register_page
 import dash_bootstrap_components as dbc
 
@@ -227,6 +227,138 @@ def latest_quarter_col(df: pd.DataFrame) -> Optional[str]:
 def sql_in(field: str, values: list[str]) -> str:
     vals = ["'" + str(v).replace("'", "''") + "'" for v in values]
     return f"{field} IN ({', '.join(vals)})"
+
+
+# ============================================================
+# Inequality measures (Hoover, Gini, GE(0), GE(1), GE(2))
+# ============================================================
+#
+# All measures operate on a single distribution y (BEV% across areas).
+# They collapse the whole distribution into scalar summary statistics,
+# so they are NOT per-area choropleth values. See Inequality_Measures.docx.
+#
+# Notes on positivity:
+#   - GE(0) and GE(1) require strictly positive values (they take ln).
+#     Zero / negative areas are dropped for those two indices and the
+#     count of dropped areas is reported so the bias is visible.
+
+def inequality_measures(y) -> dict:
+    """Return Hoover, Gini and GE(0..2) for a distribution y.
+
+    Returns an empty dict if the distribution is unusable (empty, or
+    non-positive mean).
+    """
+    y = np.asarray(y, dtype=float)
+    y = y[np.isfinite(y)]
+    n = int(len(y))
+    if n == 0:
+        return {}
+
+    ybar = float(y.mean())
+    if ybar <= 0:
+        return {}
+
+    # Hoover index (Eq. 1): share of total that must be redistributed.
+    total = float(y.sum())
+    H = float(np.abs(y - ybar).sum() / (2.0 * total)) if total > 0 else np.nan
+
+    # Gini index (Eq. 2): O(n log n) sorted form, equal to the double sum.
+    ys = np.sort(y)
+    idx = np.arange(1, n + 1)
+    G = float((2.0 * (idx * ys).sum()) / (n * ys.sum()) - (n + 1) / n) if ys.sum() > 0 else np.nan
+
+    # Generalised entropy indices require strictly positive values.
+    yp = y[y > 0]
+    m = int(len(yp))
+    n_dropped = n - m
+
+    if m > 0:
+        ratio = yp / yp.mean()
+        GE0 = float(-(np.log(ratio)).sum() / m)            # Eq. 3  (Theil's L)
+        GE1 = float((ratio * np.log(ratio)).sum() / m)     # Eq. 4  (Theil's T)
+        GE2 = float(((ratio ** 2 - 1.0).sum()) / (2.0 * m))  # Eq. 5
+    else:
+        GE0 = GE1 = GE2 = np.nan
+
+    return {
+        "n": n,
+        "n_positive": m,
+        "n_dropped": n_dropped,
+        "Hoover": H,
+        "Gini": G,
+        "GE(0)": GE0,
+        "GE(1)": GE1,
+        "GE(2)": GE2,
+    }
+
+
+def ge_decompose(y, groups, alpha: int = 1) -> dict:
+    """Additive decomposition of GE(alpha) into within- and between-group parts.
+
+    GE indices are additively decomposable (Shorrocks 1980):
+        GE_total = GE_within + GE_between.
+    Supports alpha in {0, 1, 2}. Requires strictly positive y for alpha in
+    {0, 1}. Returns an empty dict if it cannot be computed.
+    """
+    y = np.asarray(y, dtype=float)
+    groups = np.asarray(groups)
+
+    mask = np.isfinite(y)
+    y = y[mask]
+    groups = groups[mask]
+
+    if alpha in (0, 1):
+        pos = y > 0
+        y = y[pos]
+        groups = groups[pos]
+
+    n = int(len(y))
+    if n == 0:
+        return {}
+
+    ybar = float(y.mean())
+    if ybar <= 0:
+        return {}
+
+    total_stats = inequality_measures(y)
+    total = total_stats.get(f"GE({alpha})", np.nan)
+    if not np.isfinite(total):
+        return {}
+
+    within = 0.0
+    uniq = [g for g in pd.unique(groups) if str(g) != "nan"]
+    for g in uniq:
+        yg = y[groups == g]
+        ng = int(len(yg))
+        if ng == 0:
+            continue
+        ybarg = float(yg.mean())
+        if ybarg <= 0:
+            continue
+
+        pop_share = ng / n
+        inc_share = (ng * ybarg) / (n * ybar)
+
+        # Population-share weight depends on alpha (Shorrocks 1980).
+        if alpha == 0:
+            weight = pop_share
+        elif alpha == 1:
+            weight = inc_share
+        else:  # alpha == 2
+            weight = pop_share * (ybarg / ybar) ** 2
+
+        ge_g = inequality_measures(yg).get(f"GE({alpha})", np.nan)
+        if np.isfinite(ge_g):
+            within += weight * ge_g
+
+    between = total - within
+    return {
+        "alpha": alpha,
+        "total": total,
+        "within": within,
+        "between": between,
+        "n_groups": len(uniq),
+    }
 
 
 def pick_field(fields, cands):
@@ -525,6 +657,11 @@ def prepare_vehicle_data(selection: str, geo_level: str = "LAD") -> tuple[pd.Dat
     return out, geo_level
 
 def prepare_wimd_lsoa(selection: str) -> tuple[pd.DataFrame, str]:
+    # rural_charging_access has no dedicated source column yet; returning an
+    # empty frame avoids silently displaying an unrelated WIMD metric.
+    if selection == "rural_charging_access":
+        return pd.DataFrame(), "LSOA"
+
     df = load_wimd_df().copy()
 
     # Original WIMD long format.
@@ -659,6 +796,159 @@ def prepare_comparison_data(selection: str, geo_level: str = "LAD") -> tuple[pd.
     out["geography"] = geo
 
     return out, geo
+
+
+# ============================================================
+# Inequality-gap dataset (Equity -> Charging Inequality Gap)
+# ============================================================
+#
+# This selection does NOT produce a choropleth. It computes the BEV%
+# distribution across areas and returns the scalar inequality measures
+# from Inequality_Measures.docx, plus GE decompositions by income
+# deprivation band where that source is available.
+
+def _deprivation_bands(geo_level: str) -> Optional[pd.DataFrame]:
+    """Return area_code -> deprivation decile (1..10) if WIMD/IMD is wired."""
+    try:
+        dep, _ = prepare_wimd_lsoa("income_deprivation")
+    except Exception:
+        return None
+    if dep.empty or "value" not in dep.columns:
+        return None
+
+    dep = dep[["area_code", "value"]].dropna().copy()
+    if dep.empty:
+        return None
+
+    try:
+        dep["dep_band"] = pd.qcut(dep["value"].rank(method="first"), 10, labels=False) + 1
+    except Exception:
+        return None
+
+    return dep[["area_code", "dep_band"]]
+
+
+def _diagnose_bev_pipeline(geo_level: str) -> str:
+    """Return a human-readable reason the BEV% distribution is empty.
+
+    Runs each stage independently so the failure can be attributed to
+    download, column detection, or the join — rather than a generic message.
+    """
+    lines = []
+
+    # Stage 1: All-vehicle source.
+    try:
+        all_df, _ = prepare_vehicle_data("All", geo_level=geo_level)
+        if all_df.empty:
+            lines.append(
+                f"All-vehicle dataset ({geo_level}) produced 0 usable rows — the file "
+                "downloaded but no geography-code column or quarter/value column could be "
+                "matched, or no rows matched the expected area-code pattern."
+            )
+        else:
+            lines.append(f"All-vehicle dataset: {len(all_df)} areas loaded ✓")
+    except Exception as e:
+        lines.append(f"All-vehicle dataset failed to load: {e}")
+        all_df = pd.DataFrame()
+
+    # Stage 2: Plug-in source.
+    try:
+        part_df, _ = prepare_vehicle_data("Plug-in", geo_level=geo_level)
+        if part_df.empty:
+            lines.append(
+                f"Plug-in dataset ({geo_level}) produced 0 usable rows — check that the "
+                "Google Drive link is a direct download (not a '/view?usp=sharing' page) "
+                "and is shared as 'Anyone with the link can view'."
+            )
+        else:
+            lines.append(f"Plug-in dataset: {len(part_df)} areas loaded ✓")
+    except Exception as e:
+        lines.append(f"Plug-in dataset failed to load: {e}")
+        part_df = pd.DataFrame()
+
+    # Stage 3: the join.
+    if not all_df.empty and not part_df.empty:
+        overlap = set(all_df["area_code"]) & set(part_df["area_code"])
+        if not overlap:
+            lines.append(
+                "Both datasets loaded, but they share no common area codes — the "
+                "All-vehicle and Plug-in files likely use different geography vintages "
+                "or levels. The BEV% ratio needs matching codes in both."
+            )
+        else:
+            lines.append(f"Matching areas between the two datasets: {len(overlap)} ✓")
+
+    return "<br>".join(lines)
+
+
+def prepare_inequality_gap(geo_level: str = "LAD") -> tuple[pd.DataFrame, str, dict]:
+    """Compute BEV% inequality measures and decompositions.
+
+    Returns (summary_table, geo_level, extras) where summary_table is a
+    tidy per-measure table suitable for the DataTable, and extras carries
+    the decomposition rows for display.
+    """
+    bev, geo = prepare_comparison_data("Plug-in (%)", geo_level=geo_level)
+    if bev.empty or "value" not in bev.columns:
+        return pd.DataFrame(), geo, {}
+
+    y = bev["value"].to_numpy(dtype=float)
+    measures = inequality_measures(y)
+    if not measures:
+        return pd.DataFrame(), geo, {}
+
+    label_map = {
+        "Hoover": "Hoover index (H)",
+        "Gini": "Gini index (G)",
+        "GE(0)": "GE(0) — mean log deviation / Theil's L",
+        "GE(1)": "GE(1) — Theil's T",
+        "GE(2)": "GE(2) — ½ squared coeff. of variation",
+    }
+    range_map = {
+        "Hoover": "0 (equal) – 0.5",
+        "Gini": "0 (equal) – 1",
+        "GE(0)": "0 (equal) – ∞",
+        "GE(1)": "0 (equal) – ∞",
+        "GE(2)": "0 (equal) – ∞",
+    }
+
+    rows = []
+    for key in ["Hoover", "Gini", "GE(0)", "GE(1)", "GE(2)"]:
+        val = measures.get(key, np.nan)
+        rows.append({
+            "measure": label_map[key],
+            "value": round(val, 4) if np.isfinite(val) else "NA",
+            "range": range_map[key],
+        })
+
+    summary = pd.DataFrame(rows)
+
+    # GE decomposition by income-deprivation band, where available.
+    decomposition_rows = []
+    dep = _deprivation_bands(geo)
+    if dep is not None:
+        merged = bev.merge(dep, on="area_code", how="inner").dropna(subset=["value", "dep_band"])
+        if not merged.empty and merged["dep_band"].nunique() > 1:
+            for alpha in (0, 1, 2):
+                d = ge_decompose(merged["value"].to_numpy(float), merged["dep_band"].to_numpy(), alpha=alpha)
+                if d:
+                    decomposition_rows.append({
+                        "Grouping": "Income deprivation deciles",
+                        "Index": f"GE({alpha})",
+                        "Total": round(d["total"], 4),
+                        "Between": round(d["between"], 4),
+                        "Within": round(d["within"], 4),
+                        "Groups": d["n_groups"],
+                    })
+
+    extras = {
+        "measures": measures,
+        "n_areas": int(measures.get("n", 0)),
+        "n_dropped": int(measures.get("n_dropped", 0)),
+        "decomposition": decomposition_rows,
+        "geo": geo,
+    }
+    return summary, geo, extras
 
 
 def prepare_dataset(group: str, selection: str, geo_level: str = "LAD") -> tuple[pd.DataFrame, str]:
@@ -949,6 +1239,210 @@ def add_points(m: folium.Map, df: pd.DataFrame, group: str, selection: str):
         ).add_to(m)
 
 
+_INEQUALITY_EXPLAINER = """
+<details class="explainer">
+  <summary>How to read these measures</summary>
+  <p class="note">
+    Every measure below is computed over <b>BEV%</b> — the share of vehicles in
+    each area that are battery electric — and compares the observed spread to a
+    hypothetically equal distribution. Higher values always mean more unequal.
+  </p>
+
+  <div class="mcard">
+    <div class="mtitle">Hoover index (H) — the "Robin Hood" index</div>
+    <div class="note">
+      The proportion of all BEVs that would have to be moved from richer areas to
+      poorer ones to make every area equal. Ranges <b>0 (perfect equality) to 0.5</b>.
+      Intuitive as a "how much to redistribute" figure.
+      <br><i>Example:</i> H = 0.30 means 30% of BEVs would need to be reallocated
+      across areas to equalise BEV%.
+    </div>
+  </div>
+
+  <div class="mcard">
+    <div class="mtitle">Gini index (G)</div>
+    <div class="note">
+      The average difference in BEV% between every pair of areas, standardised to
+      <b>0 (all areas equal) to 1 (one area has everything)</b>. Most sensitive to
+      the middle of the distribution rather than the extremes.
+      <br><i>Example:</i> G = 0.45 is a moderately unequal spread; G = 0.15 means
+      areas are fairly similar to one another.
+    </div>
+  </div>
+
+  <div class="mcard">
+    <div class="mtitle">GE(0) — mean log deviation (Theil's L)</div>
+    <div class="note">
+      A generalised-entropy measure that is <b>most sensitive to the poorest areas</b>
+      (those with very low BEV%). Ranges <b>0 (equal) upward with no fixed ceiling</b>.
+      Good for spotting a long tail of left-behind areas.
+      <br><i>Example:</i> a cluster of areas near 0% BEV pushes GE(0) up sharply,
+      even if the top of the distribution looks fine.
+    </div>
+  </div>
+
+  <div class="mcard">
+    <div class="mtitle">GE(1) — Theil's T</div>
+    <div class="note">
+      Weights each area by its own BEV%, so it is <b>evenly sensitive across the
+      distribution</b>. Ranges <b>0 (equal) upward</b>. Its key strength is being
+      additively decomposable — total inequality splits cleanly into
+      <i>between-group</i> and <i>within-group</i> parts (see the decomposition table).
+      <br><i>Example:</i> if "between deprivation deciles" is large relative to
+      "within", the inequality is driven by deprivation rather than local variation.
+    </div>
+  </div>
+
+  <div class="mcard">
+    <div class="mtitle">GE(2) — half the squared coefficient of variation</div>
+    <div class="note">
+      <b>Most sensitive to the richest areas</b> (those with unusually high BEV%).
+      Ranges <b>0 (equal) upward</b>. Closely related to statistical variance.
+      <br><i>Example:</i> a few affluent areas with very high BEV% inflate GE(2)
+      more than they inflate GE(0) or GE(1).
+    </div>
+  </div>
+
+  <p class="note">
+    <b>Reading them together:</b> if GE(2) is high but GE(0) is low, inequality is
+    concentrated among high-uptake areas; if GE(0) is high but GE(2) is low, the
+    concern is a tail of very low-uptake areas. Hoover and Gini give the headline
+    magnitude; the GE family tells you <i>where</i> in the distribution it sits.
+  </p>
+</details>
+"""
+
+
+def _inequality_message_page(title: str, body_html: str) -> str:
+    """A standalone HTML page shown inside the map iframe for the
+    Charging Inequality Gap selection (which has no choropleth)."""
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{ font-family: Arial, sans-serif; color:#0b0c0c; margin:0; padding:24px; background:#ffffff; }}
+  h2 {{ color:#003D7A; margin:0 0 4px 0; }}
+  .sub {{ color:#505a5f; font-size:14px; margin-bottom:18px; }}
+  table {{ border-collapse: collapse; width:100%; margin-bottom:22px; }}
+  th, td {{ text-align:left; padding:8px 10px; border-bottom:1px solid #d6d6d6; font-size:15px; }}
+  th {{ background:#E8F4FD; color:#003D7A; }}
+  td.num {{ font-variant-numeric: tabular-nums; font-weight:700; }}
+  .note {{ font-size:13px; color:#505a5f; line-height:1.4; }}
+  .card {{ border:1px solid #B6D7F2; border-radius:8px; padding:16px 18px; margin-bottom:18px; background:#F8FBFF; }}
+  details.explainer {{ border:1px solid #B6D7F2; border-radius:8px; padding:6px 18px; margin-bottom:18px; background:#ffffff; }}
+  details.explainer > summary {{ cursor:pointer; font-weight:700; color:#003D7A; font-size:16px; padding:8px 0; }}
+  .mcard {{ border-left:3px solid #B6D7F2; padding:4px 0 4px 12px; margin:12px 0; }}
+  .mtitle {{ font-weight:700; color:#0b0c0c; font-size:15px; margin-bottom:3px; }}
+</style></head>
+<body>
+  <h2>{title}</h2>
+  {body_html}
+</body></html>"""
+
+
+def _render_inequality_gap(geo_level: str):
+    """Build the inequality-gap iframe HTML, table rows and note.
+
+    Returns (iframe_html, table_rows, note). The choropleth is intentionally
+    replaced by a distribution-level summary because these measures collapse
+    the whole distribution into scalar statistics.
+    """
+    try:
+        summary, geo, extras = prepare_inequality_gap(geo_level=geo_level)
+    except Exception as e:
+        page = _inequality_message_page(
+            "Charging Inequality Gap",
+            f'<div class="note">Could not compute inequality measures: {e}</div>',
+        )
+        return page, [], f"Charging Inequality Gap could not be computed: {e}"
+
+    if summary.empty:
+        diag = _diagnose_bev_pipeline(geo_level)
+        page = _inequality_message_page(
+            "Charging Inequality Gap",
+            "<div class='card'><div class='note'>The BEV% distribution could not be built "
+            "from the currently wired vehicle sources, so inequality measures are "
+            "unavailable. This requires the All-vehicle and Plug-in datasets to load "
+            "successfully.</div></div>"
+            f"<div class='card'><div class='mtitle'>Diagnostic</div>"
+            f"<div class='note'>{diag}</div></div>",
+        )
+        note = ("Selected dataset: Equity → Charging Inequality Gap. "
+                "BEV% distribution unavailable from current sources.")
+        return page, [], note
+
+    measures = extras.get("measures", {})
+    n_areas = extras.get("n_areas", 0)
+    n_dropped = extras.get("n_dropped", 0)
+    decomposition = extras.get("decomposition", [])
+    geo = extras.get("geo", geo_level)
+
+    # Measures table.
+    measure_rows = "".join(
+        f"<tr><td>{r['measure']}</td>"
+        f"<td class='num'>{r['value']}</td>"
+        f"<td class='note'>{r['range']}</td></tr>"
+        for _, r in summary.iterrows()
+    )
+    measures_table = (
+        "<div class='card'>"
+        "<table><thead><tr><th>Measure</th><th>Value</th><th>Range</th></tr></thead>"
+        f"<tbody>{measure_rows}</tbody></table>"
+        f"<div class='note'>Computed over BEV% (Plug-in vehicles as a share of all "
+        f"vehicles) across {n_areas} {geo} areas."
+        + (f" {n_dropped} area(s) with zero/negative BEV% were excluded from the "
+           f"GE(0) and GE(1) indices." if n_dropped else "")
+        + "</div></div>"
+    )
+
+    # Decomposition table (optional).
+    if decomposition:
+        decomp_rows = "".join(
+            f"<tr><td>{d['Grouping']}</td><td>{d['Index']}</td>"
+            f"<td class='num'>{d['Total']}</td>"
+            f"<td class='num'>{d['Between']}</td>"
+            f"<td class='num'>{d['Within']}</td>"
+            f"<td>{d['Groups']}</td></tr>"
+            for d in decomposition
+        )
+        decomp_table = (
+            "<div class='card'>"
+            "<h2 style='font-size:17px;'>GE decomposition</h2>"
+            "<div class='sub'>Additively decomposable inequality: total = between + within.</div>"
+            "<table><thead><tr><th>Grouping</th><th>Index</th><th>Total</th>"
+            "<th>Between</th><th>Within</th><th>Groups</th></tr></thead>"
+            f"<tbody>{decomp_rows}</tbody></table></div>"
+        )
+    else:
+        decomp_table = (
+            "<div class='card'><div class='note'>GE decomposition by income-deprivation "
+            "band is unavailable because the deprivation source is not currently wired.</div></div>"
+        )
+
+    explainer = _INEQUALITY_EXPLAINER
+
+    page = _inequality_message_page(
+        "Charging Inequality Gap",
+        f"<div class='sub'>Distribution-level inequality of BEV% "
+        f"(Hoover, Gini, GE(0), GE(1), GE(2)).</div>{measures_table}{decomp_table}{explainer}",
+    )
+
+    # Tidy rows for the DataTable / CSV download.
+    table_rows = summary.rename(
+        columns={"measure": "Measure", "value": "Value", "range": "Range"}
+    ).to_dict("records")
+
+    note = (
+        f"Selected dataset: Equity → Charging Inequality Gap. Geography: {geo}. "
+        f"Areas: {n_areas}. "
+        f"Hoover={measures.get('Hoover', float('nan')):.4f}, "
+        f"Gini={measures.get('Gini', float('nan')):.4f}, "
+        f"GE(0)={measures.get('GE(0)', float('nan')):.4f}, "
+        f"GE(1)={measures.get('GE(1)', float('nan')):.4f}, "
+        f"GE(2)={measures.get('GE(2)', float('nan')):.4f}."
+    )
+    return page, table_rows, note
+
+
 def build_map(group: Optional[str], selection: Optional[str], area_filter: Optional[str] = None, geo_level: str = "LAD"):
     def make_base_map(level: str):
         # LAD/LA: low zoom national/regional overview. LSOA: higher zoom local detail.
@@ -966,6 +1460,24 @@ def build_map(group: Optional[str], selection: Optional[str], area_filter: Optio
         ).add_to(m)
         folium.LayerControl(collapsed=False).add_to(m)
         return m.get_root().render(), [], "No dataset selected."
+
+    # Charging Inequality Gap is a distribution-level summary, not a map.
+    if group == "Equity" and selection == "charging_inequality_gap":
+        return _render_inequality_gap(geo_level)
+
+    # The Output group (Map / Trends) is a view toggle, not a dataset.
+    if group == "Output":
+        m = make_base_map(geo_level)
+        add_base_layers(m)
+        add_css(m)
+        folium.Marker(
+            [52.7, -2.8],
+            tooltip="Select a Vehicles, Chargers, Equity or Comparisons dataset to display.",
+        ).add_to(m)
+        folium.LayerControl(collapsed=False).add_to(m)
+        note = (f"Output → {selection} is a view option. "
+                "Select a dataset from another group to populate the map.")
+        return m.get_root().render(), [], note
 
     try:
         df, geo_level = prepare_dataset(group, selection, geo_level=geo_level)
@@ -1254,18 +1766,40 @@ def active_selection(output_value, vehicles_value, chargers_value, equity_value,
 def enforce_single_dataset(output_value, vehicles_value, chargers_value, equity_value, comparisons_value):
     trigger = ctx.triggered_id
 
-    if trigger == "output-selection":
-        return output_value, None, None, None, None
-    if trigger == "vehicles-selection":
-        return None, vehicles_value, None, None, None
-    if trigger == "chargers-selection":
-        return None, None, chargers_value, None, None
-    if trigger == "equity-selection":
-        return None, None, None, equity_value, None
-    if trigger == "comparisons-selection":
-        return None, None, None, None, comparisons_value
+    # Leave the radio the user just touched untouched (no_update) and clear
+    # only the others. Writing no_update to the triggered control prevents the
+    # callback from re-firing on its own output, which is what caused flicker.
+    ids = [
+        "output-selection",
+        "vehicles-selection",
+        "chargers-selection",
+        "equity-selection",
+        "comparisons-selection",
+    ]
 
-    return output_value, vehicles_value, chargers_value, equity_value, comparisons_value
+    if trigger not in ids:
+        return (no_update,) * 5
+
+    # Only clear a sibling if it currently holds a value (avoids no-op writes
+    # that some Dash versions would still treat as changes).
+    current = {
+        "output-selection": output_value,
+        "vehicles-selection": vehicles_value,
+        "chargers-selection": chargers_value,
+        "equity-selection": equity_value,
+        "comparisons-selection": comparisons_value,
+    }
+
+    result = []
+    for cid in ids:
+        if cid == trigger:
+            result.append(no_update)
+        elif current[cid] is not None:
+            result.append(None)
+        else:
+            result.append(no_update)
+
+    return tuple(result)
 
 
 @callback(
@@ -1318,22 +1852,44 @@ def update_map(
     }.get(group)
 
     requested_geo_level = "LSOA" if geo_switch else "LAD"
+
+    # Only the group whose filter changed should keep its dropdown; rebuild the
+    # option list from the UNFILTERED dataset so selecting an area never
+    # collapses the dropdown to a single option.
+    trigger = ctx.triggered_id
+    filter_triggered = isinstance(trigger, str) and trigger.endswith("-filter")
+
+    # Build the map/table with the active area filter applied.
     map_html, rows, note = build_map(group, selection, area_filter, geo_level=requested_geo_level)
+
+    # Build the dropdown option list from the unfiltered dataset (area_filter=None).
+    if area_filter:
+        _, full_rows, _ = build_map(group, selection, None, geo_level=requested_geo_level)
+    else:
+        full_rows = rows
 
     columns = [{"name": c, "id": c} for c in rows[0].keys()] if rows else []
 
     area_options = {}
-    for row in rows:
+    for row in full_rows:
         area = row.get("area_name")
         if area:
             area_options[str(area)] = {"label": str(area), "value": str(area)}
 
     area_options = sorted(area_options.values(), key=lambda x: x["label"])
 
-    vehicles_options = area_options if group == "Vehicles" else []
-    chargers_options = area_options if group == "Chargers" else []
-    equity_options = area_options if group == "Equity" else []
-    comparisons_options = area_options if group == "Comparisons" else []
+    # When a filter itself was the trigger, leave every dropdown's options
+    # untouched (no_update) to avoid churn; only rebuild on dataset/geo change.
+    if filter_triggered:
+        vehicles_options = no_update
+        chargers_options = no_update
+        equity_options = no_update
+        comparisons_options = no_update
+    else:
+        vehicles_options = area_options if group == "Vehicles" else []
+        chargers_options = area_options if group == "Chargers" else []
+        equity_options = area_options if group == "Equity" else []
+        comparisons_options = area_options if group == "Comparisons" else []
 
     display = (
         html.Div([html.Strong("Selected dataset: "), html.Span(f"{group} → {selection}")])

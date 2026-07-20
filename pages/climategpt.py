@@ -24,7 +24,7 @@ API_URL = os.getenv(
 MODEL_NAME = os.getenv("CLIMATEGPT_MODEL_NAME", "climategpt-7b")
 API_KEY = os.getenv("CLIMATEGPT_API_KEY", "").strip()
 
-MAX_TOKENS = int(os.getenv("CLIMATEGPT_MAX_TOKENS", "120"))
+MAX_TOKENS = int(os.getenv("CLIMATEGPT_MAX_TOKENS", "320"))
 MIN_TOKENS = int(os.getenv("CLIMATEGPT_MIN_TOKENS", "20"))
 REQUEST_TIMEOUT = int(os.getenv("CLIMATEGPT_TIMEOUT", "1200"))
 
