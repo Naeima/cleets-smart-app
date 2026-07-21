@@ -6,5 +6,16 @@ services:
     ports:
       - "8052:8052"
     restart: unless-stopped
+    environment:
+      CLIMATEGPT_API_URL: http://172.17.0.1:8000/v1/chat/completions
+      CLIMATEGPT_MODEL_NAME: eci-io/climategpt-7b
+      CLIMATEGPT_MAX_TOKENS: 320
+      CLIMATEGPT_MIN_TOKENS: 20
+      CLIMATEGPT_TIMEOUT: 1200
+      CLIMATEGPT_LORA_TRIGGER_COUNT: 20
+      CLIMATEGPT_FEEDBACK_DB: /app/data/climategpt_feedback.sqlite3
+      CLIMATEGPT_LORA_STATE_FILE: /app/data/lora_state.json
 
+    volumes:
+      - ./climategpt-data:/app/data
 
