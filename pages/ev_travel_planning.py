@@ -10,12 +10,10 @@ import json
 import time
 import math
 import heapq
-import pickle
 import hashlib
 import gzip
 import zipfile
 import re
-import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -79,33 +77,6 @@ register_page(
     name="EV Travel Planning",
 )
 
-
-def back_button():
-    return html.Div(
-        children=[
-            html.A(
-                "← Back to Home",
-                href="/",
-                style={
-                    "textDecoration": "none",
-                    "fontWeight": "600",
-                    "padding": "8px 14px",
-                    "border": "1px solid #ccc",
-                    "borderRadius": "8px",
-                    "backgroundColor": "#f8f9fa",
-                    "color": "#333",
-                    "boxShadow": "0 1px 3px rgba(0,0,0,0.12)",
-                },
-            )
-        ],
-        style={
-            "position": "absolute",
-            "top": "20px",
-            "right": "30px",
-            "zIndex": "1000",
-        },
-    )
-
 # ============================================================
 # Global config
 # ============================================================
@@ -131,30 +102,6 @@ LOGO_GDRIVE_FILE_OR_URL = (
 LOGO_CACHE_PATH = os.path.join(CACHE_DIR, "cleets_logo-01.png")
 
 OWS_BASE = "https://datamap.gov.wales/geoserver/ows"
-
-# Semantic aliases used by some WMS/WFS catalogues and legacy matching code.
-# NRW exposes canonical INSPIRE layer names; planning/risk classes are attributes,
-# not standalone layer names. The aliases below map those semantic requests onto
-# the canonical published layer(s).
-OWS_LAYER_ALIASES = {
-    # Planning flood zones are encoded as attributes inside the merged FMfP layer.
-    "Flood Zone 2 (undefended)": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
-    "Flood Zone 3 (undefended)": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
-    # NRW risk layers are published separately for rivers and sea.
-    "Risk of Flooding (Rivers & Sea)": [
-        "inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS",
-        "inspire-nrw:NRW_FLOOD_RISK_FROM_SEA",
-    ],
-    # Human-readable labels used inside this app.
-    "FRAW – Rivers": ["inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS"],
-    "FRAW – Sea": ["inspire-nrw:NRW_FLOOD_RISK_FROM_SEA"],
-    "FRAW – Surface": ["inspire-nrw:NRW_FLOOD_RISK_FROM_SURFACE_WATER_SMALL_WATERCOURSES"],
-    "FMfP – Rivers & Sea": ["inspire-nrw:NRW_FLOODZONE_RIVERS_SEAS_MERGED"],
-    "FMfP – Surface/Small Watercourses": ["inspire-nrw:NRW_FLOODZONE_SURFACE_WATER_AND_SMALL_WATERCOURSES"],
-    "Live – Warning Areas": ["inspire-nrw:NRW_FLOOD_WARNING"],
-    "Live – Alert Areas": ["inspire-nrw:NRW_FLOOD_WATCH_AREAS"],
-    "Historic Flood Extents": ["inspire-nrw:NRW_HISTORIC_FLOODMAP"],
-}
 
 FRAW_WMS = {
     "FRAW – Rivers": "inspire-nrw:NRW_FLOOD_RISK_FROM_RIVERS",
@@ -185,134 +132,6 @@ LIVE_WFS = {
     "Alerts": "inspire-nrw:NRW_FLOOD_WATCH_AREAS",
 }
 
-
-def _capabilities_cache_path(service: str) -> str:
-    svc = str(service).strip().lower()
-    return os.path.join(WFS_LAYER_CACHE_DIR, f"{svc}_capabilities.xml")
-
-
-def _fetch_ows_capabilities(service: str = "WMS", ttl_days: int = 14) -> bytes:
-    cache_path = _capabilities_cache_path(service)
-    if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < ttl_days * 86400:
-        try:
-            with open(cache_path, "rb") as f:
-                return f.read()
-        except Exception:
-            pass
-
-    params = {
-        "service": str(service).upper(),
-        "version": "1.3.0" if str(service).upper() == "WMS" else "2.0.0",
-        "request": "GetCapabilities",
-    }
-    sess = _requests_session()
-    r = sess.get(OWS_BASE, params=params, timeout=60)
-    r.raise_for_status()
-    raw = r.content
-    try:
-        with open(cache_path, "wb") as f:
-            f.write(raw)
-    except Exception:
-        pass
-    return raw
-
-
-def _norm_tokens(text_: str) -> List[str]:
-    s = re.sub(r"[^a-z0-9]+", " ", str(text_).lower()).strip()
-    return [t for t in s.split() if t]
-
-
-# Tokens that are helpful for fuzzy lookup, excluding semantic classes which are
-# represented as attributes rather than standalone NRW layer names.
-_LAYER_STOPWORDS = {
-    "flood", "zone", "risk", "of", "from", "the", "and", "undefended",
-}
-
-
-def _parse_ows_layers(service: str = "WMS") -> List[Dict[str, str]]:
-    try:
-        raw = _fetch_ows_capabilities(service=service)
-        root = ET.fromstring(raw)
-    except Exception:
-        return []
-
-    layers: List[Dict[str, str]] = []
-    seen: set[Tuple[str, str]] = set()
-    ns_name = lambda tag: tag.rsplit("}", 1)[-1]
-
-    for el in root.iter():
-        if ns_name(el.tag) != "Layer":
-            continue
-        name = None
-        title = None
-        for ch in list(el):
-            t = ns_name(ch.tag)
-            if t == "Name" and ch.text:
-                name = ch.text.strip()
-            elif t == "Title" and ch.text:
-                title = ch.text.strip()
-        if not name and not title:
-            continue
-        key = (name or "", title or "")
-        if key in seen:
-            continue
-        seen.add(key)
-        layers.append({"name": name or "", "title": title or ""})
-    return layers
-
-
-def resolve_ows_layers(requested: str, service: str = "WMS") -> List[str]:
-    """Resolve human/semantic layer requests onto canonical NRW published names.
-
-    This avoids failures such as trying to discover separate layers called
-    'Flood Zone 2 (undefended)' or 'Risk of Flooding (Rivers & Sea)' when NRW
-    instead publishes merged INSPIRE layers whose risk/zone classes live in
-    feature attributes.
-    """
-    req = str(requested or "").strip()
-    if not req:
-        return []
-
-    alias = OWS_LAYER_ALIASES.get(req)
-    if alias:
-        return list(dict.fromkeys(alias))
-
-    advertised = _parse_ows_layers(service=service)
-    if not advertised:
-        return [req]
-
-    req_low = req.lower()
-    exact = [x["name"] for x in advertised if x["name"].lower() == req_low]
-    if exact:
-        return list(dict.fromkeys(exact))
-
-    exact_title = [x["name"] for x in advertised if x["title"].lower() == req_low and x["name"]]
-    if exact_title:
-        return list(dict.fromkeys(exact_title))
-
-    req_tokens = [t for t in _norm_tokens(req) if t not in _LAYER_STOPWORDS]
-    if not req_tokens:
-        return [req]
-
-    scored: List[Tuple[int, int, str]] = []
-    for item in advertised:
-        name = item["name"]
-        title = item["title"]
-        if not name:
-            continue
-        toks = set(_norm_tokens(name) + _norm_tokens(title))
-        overlap = len([t for t in req_tokens if t in toks])
-        if overlap:
-            scored.append((overlap, len(toks), name))
-
-    if scored:
-        scored.sort(key=lambda x: (-x[0], x[1], x[2]))
-        best_overlap = scored[0][0]
-        return list(dict.fromkeys([name for ov, _n, name in scored if ov == best_overlap]))
-
-    return [req]
-
-
 SIM_DEFAULTS = dict(
     start_lat=51.4816,
     start_lon=-3.1791,
@@ -341,14 +160,8 @@ DEFAULT_POWER_KW = 50.0
 BASE_RISK_PENALTY_PER_KM = 60.0
 EXTREME_RISK_PENALTY_PER_KM = 240.0
 EXTREME_BUFFER_M = 60.0
-MAX_GRAPH_BBOX_DEG = 1.25
+MAX_GRAPH_BBOX_DEG = 1.0
 ROUTE_BUFFER_M = 30
-
-# Full optimisation can legitimately need longer than Dash's original
-# hard-coded demo budget when OSMnx has to build a fresh graph. These can be
-# overridden without editing code, e.g. ONS_GRAPH_BUILD_TIMEOUT=180.
-GRAPH_BUILD_TIMEOUT = float(os.getenv("ONS_GRAPH_BUILD_TIMEOUT", "120"))
-ROUTE_CALLBACK_TIMEOUT = float(os.getenv("ONS_ROUTE_CALLBACK_TIMEOUT", "180"))
 
 ZONE_COLORS = {
     "Zone 3": "#D32F2F",
@@ -648,7 +461,7 @@ def fetch_wfs_layer_cached(
         "service": "WFS",
         "version": "2.0.0",
         "request": "GetFeature",
-        "typeNames": ",".join(resolve_ows_layers(layer_name, service="WFS")),
+        "typeNames": layer_name,
         "outputFormat": "application/json",
         "srsName": "EPSG:4326",
         # WFS 2.0 axis order for EPSG:4326 is often lat,lon:
@@ -707,8 +520,6 @@ if df is None or df.empty:
     )
     country_OPTIONS: List[str] = []
 else:
-    df = df.copy()
-
     area_col = (
         "country"
         if "country" in df.columns
@@ -716,12 +527,8 @@ else:
     )
     df[area_col] = df[area_col].astype(str).str.strip().str.title()
 
-    lat_src = df["latitude"] if "latitude" in df.columns else df.get("Latitude")
-    lon_src = df["longitude"] if "longitude" in df.columns else df.get("Longitude")
-    df = df.assign(
-        Latitude=pd.to_numeric(lat_src, errors="coerce"),
-        Longitude=pd.to_numeric(lon_src, errors="coerce"),
-    )
+    df["Latitude"] = pd.to_numeric(df.get("latitude", df.get("Latitude")), errors="coerce")
+    df["Longitude"] = pd.to_numeric(df.get("longitude", df.get("Longitude")), errors="coerce")
     df = df.dropna(subset=["Latitude", "Longitude"]).copy()
 
     df["country"] = df[area_col].astype(str)
@@ -766,9 +573,6 @@ def _osrm_try(base_url, sl, so, el, eo, want_steps=True):
     sess = _requests_session_osrm()
     r = sess.get(url, params=params, timeout=20)
     r.raise_for_status()
-    ctype = (r.headers.get("Content-Type") or "").lower()
-    if "json" not in ctype:
-        raise RuntimeError(f"Unexpected OSRM content type: {ctype}")
     data = r.json()
     if not data.get("routes"):
         raise RuntimeError("No routes")
@@ -858,14 +662,6 @@ def _graph_point_cache_path(lat, lon, dist_m):
 
 def _graph_bbox_cache_path(north, south, east, west):
     key = f"bbox_{round(north,5)}_{round(south,5)}_{round(east,5)}_{round(west,5)}.graphml"
-    return os.path.join(GRAPH_CACHE_DIR, key)
-
-def _processed_graph_cache_path(start_lat, start_lon, end_lat, end_lon, mode_tag: str) -> str:
-    key = (
-        f"proc_{mode_tag}_"
-        f"{round(float(start_lat), 3)}_{round(float(start_lon), 3)}_"
-        f"{round(float(end_lat), 3)}_{round(float(end_lon), 3)}.pkl"
-    )
     return os.path.join(GRAPH_CACHE_DIR, key)
 
 def _ox_save_graphml(G, path):
@@ -995,13 +791,11 @@ def rcsp_optimize(
     flood_union_m,
     extreme: bool = False,
     risk_penalty_per_km: Optional[float] = None,
-    max_seconds: float = 30.0,
+    max_seconds: float = 10.0,
     soc_step: Optional[float] = None,
 ):
     if not HAS_OSMNX:
         raise RuntimeError("OSMnx not installed")
-
-    total_t0 = time.time()
 
     # --- graph bbox ---
     minlat, maxlat = sorted([float(start_lat), float(end_lat)])
@@ -1015,63 +809,18 @@ def rcsp_optimize(
     south, north = minlat - pad, maxlat + pad
     west, east = minlon - pad, maxlon + pad
 
-    # Prefer a continuous bounding-box graph whenever the bbox is still manageable.
-    # The previous diag_km > 30 switch composed two small endpoint graphs; for
-    # South Wales journeys this often left the middle corridor disconnected and
-    # produced a false "No feasible RCSP solution".
-    use_point_graph = (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG
-    mode_tag = "two_points" if use_point_graph else "bbox"
-    proc_path = _processed_graph_cache_path(start_lat, start_lon, end_lat, end_lon, mode_tag)
-
-    G = None
-    edges = None
-    edges_m = None
-
-    if os.path.exists(proc_path):
-        try:
-            with open(proc_path, "rb") as f:
-                cached = pickle.load(f)
-            G = cached.get("G")
-            edges = cached.get("edges")
-            edges_m = cached.get("edges_m")
-        except Exception:
-            G = None
-            edges = None
-            edges_m = None
-
-    if G is None or edges is None or edges_m is None:
-        stage_t0 = time.time()
-        if use_point_graph:
-            fallback_radius_m = int(max(18_000, min(75_000, (diag_km * 1000.0 / 2.0) + 12_000)))
-            G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=fallback_radius_m)
-        else:
-            G = _build_graph_bbox(north, south, east, west)
-
-        if time.time() - total_t0 > GRAPH_BUILD_TIMEOUT:
-            raise TimeoutError(
-                f"Graph build exceeded {GRAPH_BUILD_TIMEOUT:.0f}s; "
-                "try Light mode or reduce route distance."
-            )
-
-        G = ox.add_edge_speeds(G)
-        G = ox.add_edge_travel_times(G)
-
-        Gm = ox.project_graph(G, to_crs="EPSG:27700")
-        edges_m = ox.graph_to_gdfs(Gm, nodes=False, edges=True, fill_edge_geometry=True)
-        edges = ox.graph_to_gdfs(G, nodes=False, edges=True, fill_edge_geometry=True)
-
-        try:
-            with open(proc_path, "wb") as f:
-                pickle.dump({"G": G, "edges": edges, "edges_m": edges_m}, f, protocol=pickle.HIGHEST_PROTOCOL)
-        except Exception:
-            pass
-
-        print(f"[rcsp_optimize] graph prep: {time.time() - stage_t0:.2f}s (diag_km={diag_km:.1f}, mode={mode_tag})")
+    if (east - west) > MAX_GRAPH_BBOX_DEG or (north - south) > MAX_GRAPH_BBOX_DEG or diag_km > 60.0:
+        G = _graph_two_points(start_lat, start_lon, end_lat, end_lon, dist_m=30000)
     else:
-        print(f"[rcsp_optimize] graph prep: cache hit (diag_km={diag_km:.1f}, mode={mode_tag})")
+        G = _build_graph_bbox(north, south, east, west)
 
-    if time.time() - total_t0 > ROUTE_CALLBACK_TIMEOUT:
-        raise TimeoutError("Route optimisation exceeded callback budget")
+    # --- enrich edges ---
+    G = ox.add_edge_speeds(G)
+    G = ox.add_edge_travel_times(G)
+
+    Gm = ox.project_graph(G, to_crs="EPSG:27700")
+    edges_m = ox.graph_to_gdfs(Gm, nodes=False, edges=True, fill_edge_geometry=True)
+    edges = ox.graph_to_gdfs(G, nodes=False, edges=True, fill_edge_geometry=True)
 
     # --- risk tag ---
     if flood_union_m is not None:
@@ -1124,15 +873,10 @@ def rcsp_optimize(
                 nid = nn(G, float(r["Longitude"]), float(r["Latitude"]))
                 p_kw = r.get("power_kW", DEFAULT_POWER_KW)
                 p_kw = float(p_kw) if pd.notna(p_kw) and float(p_kw) > 0 else DEFAULT_POWER_KW
-                label = str(r.get("AvailabilityLabel", "")).strip().lower()
-                # Treat unknown status as usable for route search. Explicitly
-                # non-operational chargers remain excluded. This avoids false
-                # infeasibility when the public dataset has missing status labels.
-                is_operational = label not in {"not operational", "offline", "out of service", "fault", "faulted"}
                 chargers[nid] = {
                     "ROW_ID": int(r["ROW_ID"]),
                     "power_kW": p_kw,
-                    "operational": is_operational,
+                    "operational": str(r.get("AvailabilityLabel", "")) == "Operational",
                 }
             except Exception:
                 continue
@@ -1216,16 +960,8 @@ def rcsp_optimize(
                     heapq.heappush(pq, (c2, node, k2[1]))
 
     if goal is None:
-        usable_chargers = sum(1 for ch in chargers.values() if ch.get("operational"))
-        direct_km = haversine_km(start_lat, start_lon, end_lat, end_lon)
-        max_range_km = max(0.0, (init_q - reserve_q) * float(battery_kwh) / max(1e-9, float(kwh_per_km)))
         raise RuntimeError(
-            "No feasible RCSP solution. "
-            f"Diagnostics: direct distance≈{direct_km:.1f} km; "
-            f"usable range before reserve≈{max_range_km:.1f} km; "
-            f"usable chargers snapped to graph={usable_chargers}; "
-            f"graph mode={mode_tag}; bbox size={east-west:.2f}°×{north-south:.2f}°. "
-            "Try Light mode, lower reserve SoC, reduce consumption, or increase graph coverage."
+            "No feasible RCSP solution (try lowering reserve/target SoC, increasing bbox pad, or using Light mode)."
         )
 
     # --- reconstruct stops (forward order) + geometry ---
@@ -1269,7 +1005,6 @@ def rcsp_optimize(
     line = LineString(coords)
     safe_lines, risk_lines = segment_route_by_risk(line, flood_union_m, buffer_m=ROUTE_BUFFER_M)
     total_cost = float(best.get(goal, float("inf")))
-    print(f"[rcsp_optimize] total: {time.time() - total_t0:.2f}s")
 
     return line, safe_lines, risk_lines, stops, total_cost
 
@@ -1376,12 +1111,9 @@ def preload_zones_json() -> str:
 def add_wms_group(fmap, title_to_layer: dict, visible=True, opacity=0.55):
     for title, layer in title_to_layer.items():
         try:
-            resolved_layers = resolve_ows_layers(layer, service="WMS") if isinstance(layer, str) else [str(layer)]
-            if not resolved_layers:
-                continue
             WmsTileLayer(
                 url=OWS_BASE,
-                layers=",".join(resolved_layers),
+                layers=layer,
                 name=f"{title} (WMS)",
                 fmt="image/png",
                 transparent=True,
@@ -1391,94 +1123,6 @@ def add_wms_group(fmap, title_to_layer: dict, visible=True, opacity=0.55):
             ).add_to(fmap)
         except Exception:
             pass
-
-
-
-def add_fmfp_blue_wfs_group(fmap, bbox_lonlat, visible=True):
-    """Render FMfP flood-zone polygons client-side in fixed blue water-style colours."""
-    layer_styles = {
-        "FMfP – Rivers & Sea": {
-            "fillColor": "#4FC3F7",
-            "color": "#1E88E5",
-            "weight": 1,
-            "fillOpacity": 0.35,
-        },
-        "FMfP – Surface/Small Watercourses": {
-            "fillColor": "#81D4FA",
-            "color": "#29B6F6",
-            "weight": 1,
-            "fillOpacity": 0.30,
-        },
-    }
-    for title, layer in FMFP_WFS.items():
-        try:
-            resolved_layers = resolve_ows_layers(layer, service="WFS")
-            g_parts = []
-            for resolved in resolved_layers:
-                g0 = fetch_wfs_layer_cached(resolved, bbox_lonlat)
-                if g0 is not None and not g0.empty:
-                    g_parts.append(g0)
-            if not g_parts:
-                continue
-            g = gpd.GeoDataFrame(pd.concat(g_parts, ignore_index=True), geometry="geometry", crs="EPSG:4326")
-            if g is None or g.empty:
-                continue
-            style = layer_styles.get(title, layer_styles["FMfP – Rivers & Sea"])
-            folium.GeoJson(
-                data=g.__geo_interface__,
-                name=f"{title} (blue)",
-                show=visible,
-                style_function=lambda _feature, style=style: style,
-                highlight_function=lambda _feature: {
-                    "weight": max(2, int(style.get("weight", 1)) + 1),
-                    "fillOpacity": min(0.6, float(style.get("fillOpacity", 0.35)) + 0.1),
-                    "color": style.get("color", "#1E88E5"),
-                    "fillColor": style.get("fillColor", "#4FC3F7"),
-                },
-            ).add_to(fmap)
-        except Exception:
-            continue
-
-def add_live_wms_blue_group(fmap, visible=True, opacity=0.75):
-    """Render original NRW live warning/alert WMS tiles, recoloured blue.
-
-    The original live warning layer is a WMS image layer. Because its black
-    styling is baked into the server tiles, this keeps the reliable original
-    WMS source and applies a CSS filter to make the live warning tiles blue.
-    """
-    css = """
-    <style>
-      img.live-warning-blue-tile {
-        filter: invert(24%) sepia(98%) saturate(2900%) hue-rotate(190deg) brightness(95%) contrast(105%) !important;
-        opacity: 0.85 !important;
-      }
-    </style>
-    """
-    try:
-        fmap.get_root().html.add_child(folium.Element(css))
-    except Exception:
-        pass
-
-    for title, layer in LIVE_WMS.items():
-        try:
-            resolved_layers = resolve_ows_layers(layer, service="WMS") if isinstance(layer, str) else [str(layer)]
-            if not resolved_layers:
-                continue
-            WmsTileLayer(
-                url=OWS_BASE,
-                layers=",".join(resolved_layers),
-                name=f"{title} (blue WMS)",
-                fmt="image/png",
-                transparent=True,
-                opacity=opacity,
-                version="1.3.0",
-                show=visible,
-                **{"className": "live-warning-blue-tile"},
-            ).add_to(fmap)
-        except Exception as e:
-            print(f"[Live WMS Blue] skipped {title}: {e}")
-            continue
-
 
 def add_base_tiles(m):
     folium.TileLayer(
@@ -1663,11 +1307,11 @@ def render_map_html_ev(
     if show_fraw:
         add_wms_group(m, FRAW_WMS, True, 0.50)
     if show_fmfp:
-        add_fmfp_blue_wfs_group(m, _bbox_for(gdf_ev if gdf_ev is not None and not gdf_ev.empty else None), visible=True)
+        add_wms_group(m, FMFP_WMS, True, 0.55)
     if show_ctx:
         add_wms_group(m, CONTEXT_WMS, False, 0.45)
     if show_live:
-        add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
+        add_wms_group(m, LIVE_WMS, True, 0.65)
 
     if heat_data:
         add_heat_overlay(m, heat_data, vmin=5, vmax=25, opacity=0.55)
@@ -1698,12 +1342,9 @@ def render_map_html_route(
     end: Tuple[float, float],
     chargers: List[Dict[str, Any]],
     all_chargers_df: Optional[pd.DataFrame] = None,
-    animate: bool = True,
+    animate: bool = False,
     speed_kmh: float = 50,
-    show_fraw: bool = True,
-    show_fmfp: bool = True,
-    show_live: bool = True,
-    show_ctx: bool = True,
+    show_live_backdrops: bool = False,
 ):
     m = folium.Map(
         location=[(start[0] + end[0]) / 2, (start[1] + end[1]) / 2],
@@ -1796,13 +1437,7 @@ def render_map_html_route(
             icon=make_beautify_icon(color_hex),
         ).add_to(cluster)
 
-    if show_fraw:
-        add_wms_group(m, FRAW_WMS, visible=True, opacity=0.60)
-    if show_fmfp:
-        add_fmfp_blue_wfs_group(m, bbox_expand(full_line.bounds, SIM_DEFAULTS["wfs_pad_m"]), visible=True)
-    if show_ctx:
-        add_wms_group(m, CONTEXT_WMS, visible=True, opacity=0.45)
-    if show_live:
+    if show_live_backdrops:
         add_wms_group(m, LIVE_WMS, visible=True, opacity=0.65)
 
     folium.LayerControl(collapsed=True).add_to(m)
@@ -1895,10 +1530,9 @@ def build_kml(route_data: Dict[str, Any]) -> str:
 
 layout = html.Div(
     [
-        back_button(),
         html.H1(
-            "C) Electric Vehicle (EV) Chargers & Flood Overlays and EV Travel Planning",
-            style={"margin": "24px 7px 8px", "fontSize": "50px"},
+            "C) Electric Vehicle (EV) Chargers & Flood Overlays & Journey Simulator (EV Travel Planning)",
+            style={"margin": "24px 7px 8px"},
         ),
 
         # --- explainer boxes ---
@@ -1938,7 +1572,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#eaf3fb",
-                        "fontSize": "28px",
+                        "fontSize": "15px",
                     },
                 ),
                 html.Div(
@@ -1965,7 +1599,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                                 "padding": "14px",
                                 "borderRadius": "10px",
                                 "backgroundColor": "#e6f7f5",
-                                "fontSize": "35px",
+                                "fontSize": "15px",
                             },
                         ),
                     ],
@@ -1974,7 +1608,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         "borderRadius": "12px",
                         "padding": "20px",
                         "backgroundColor": "#fff2e6",
-                        "fontSize": "35px",
+                        "fontSize": "15px",
                     },
                 ),
             ],
@@ -2002,7 +1636,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                             placeholder="All countries",
                         ),
                     ],
-                    style={"minWidth": "230px"},
+                    style={"minWidth": "260px"},
                 ),
                 html.Div(
                     [
@@ -2038,7 +1672,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                                 {"label": "Live warnings", "value": "live"},
                                 {"label": "Context", "value": "ctx"},
                             ],
-                            value=["fraw", "fmfp", "live"],
+                            value=["fraw", "fmfp"],
                             inputStyle={"marginRight": "6px"},
                         ),
                     ],
@@ -2059,13 +1693,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     "Compute/Update zones",
                     id="btn-zones",
                     n_clicks=0,
-                    style={
-                        "height": "46px",
-                        "marginLeft": "8px",
-                        "fontSize": "22px",
-                        "fontWeight": "600",
-                        "padding": "8px 16px",
-                    },
+                    style={"height": "38px", "marginLeft": "8px"},
                 ),
             ],
             style={
@@ -2086,7 +1714,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                         dcc.Input(id="sla", type="number", value=SIM_DEFAULTS["start_lat"], step=0.001, style={"width": "45%"}),
                         dcc.Input(id="slo", type="number", value=SIM_DEFAULTS["start_lon"], step=0.001, style={"width": "45%", "marginLeft": "4px"}),
                     ],
-                    style={"minWidth": "230px"},
+                    style={"minWidth": "260px"},
                 ),
                 html.Div(
                     [
@@ -2113,7 +1741,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Initial SoC"),
                         dcc.Slider(id="si", min=0.1, max=1.0, step=0.05, value=0.90),
-                        html.Div(id="si-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="90%"),
+                        html.Div(id="si-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="90%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2121,7 +1749,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Reserve SoC"),
                         dcc.Slider(id="sres", min=0.05, max=0.30, step=0.05, value=0.10),
-                        html.Div(id="sres-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="10%"),
+                        html.Div(id="sres-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="10%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2129,7 +1757,7 @@ These overlays provide situational awareness; **only segmentation uses the union
                     [
                         html.Label("Target SoC"),
                         dcc.Slider(id="stgt", min=0.5, max=1.0, step=0.05, value=0.80),
-                        html.Div(id="stgt-label", style={"textAlign": "right", "fontSize": "18px", "color": "#666"}, children="80%"),
+                        html.Div(id="stgt-label", style={"textAlign": "right", "fontSize": "12px", "color": "#666"}, children="80%"),
                     ],
                     style={"minWidth": "220px"},
                 ),
@@ -2173,29 +1801,8 @@ These overlays provide situational awareness; **only segmentation uses the union
 
         html.Div(
             [
-                html.Button(
-                    "Optimise",
-                    id="simulate",
-                    n_clicks=0,
-                    style={
-                        "marginTop": "20px",
-                        "fontSize": "22px",
-                        "fontWeight": "600",
-                        "padding": "10px 18px",
-                    },
-                ),
-                html.Button(
-                    "Download KML",
-                    id="btn-kml",
-                    n_clicks=0,
-                    style={
-                        "marginLeft": "8px",
-                        "marginTop": "20px",
-                        "fontSize": "22px",
-                        "fontWeight": "600",
-                        "padding": "10px 18px",
-                    },
-                ),
+                html.Button("Optimise", id="simulate", n_clicks=0, style={"marginTop": "10px"}),
+                html.Button("Download KML", id="btn-kml", n_clicks=0, style={"marginLeft": "8px", "marginTop": "10px"}),
             ],
             style={"display": "flex", "gap": "8px"},
         ),
@@ -2390,10 +1997,7 @@ def _update_map(
                     all_chargers_df=route_chargers,
                     animate=False,
                     speed_kmh=45,
-                    show_fraw=show_fraw,
-                    show_fmfp=show_fmfp,
-                    show_live=show_live,
-                    show_ctx=show_ctx,
+                    show_live_backdrops=False,
                 )
 
                 msg = [f"**Routing plan (fast/OSRM)** — {dist_m/1000.0:.1f} km • {dur_s/3600.0:.2f} h"]
@@ -2450,10 +2054,7 @@ def _update_map(
                     all_chargers_df=route_chargers,
                     animate=False,
                     speed_kmh=45,
-                    show_fraw=show_fraw,
-                    show_fmfp=show_fmfp,
-                    show_live=show_live,
-                    show_ctx=show_ctx,
+                    show_live_backdrops=False,
                 )
 
             stats = build_route_statistics(line, safe_lines, risk_lines, stops, total_cost, batt, kwhkm)
