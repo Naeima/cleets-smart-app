@@ -135,6 +135,15 @@ layout = html.Div([
 
             html.Div(
                 children=[
+                    html.Img(src="/assets/CHAT.png", style=IMG_STYLE),
+                    html.A("J) CLEETS-CHAT ", href="https://naeima.github.io/cleets-chat/", target = "_blank", style=TITLE_STYLE),
+                    html.P("Cited and Hallucination-Free AI with Traceability", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eaedfb"}
+            ),
+
+            html.Div(
+                children=[
                     html.Img(src="/assets/team.png", style=IMG_STYLE),
                     html.A("CLEETS-SMART Data Science Group", href="https://cleets-global-center.org/", target="_blank", style=TITLE_STYLE)
                 ],
