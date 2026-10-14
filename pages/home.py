@@ -144,6 +144,15 @@ layout = html.Div([
 
             html.Div(
                 children=[
+                    html.Img(src="/assets/EHTS.png", style=IMG_STYLE),
+                    html.A("H) EHTS Operation Dashboard", href="https://flyao123.github.io/Dual-agent-RL-for-EHTS-Dashboard/", target = "_blank", style=TITLE_STYLE),
+                    html.P("CLEETS-EHTS: Electricity- Hydrogen-Transport-System", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf9"}
+            ),
+
+            html.Div(
+                children=[
                     html.Img(src="/assets/team.png", style=IMG_STYLE),
                     html.A("CLEETS-SMART Data Science Group", href="https://cleets-global-center.org/", target="_blank", style=TITLE_STYLE)
                 ],
