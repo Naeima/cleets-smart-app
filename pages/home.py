@@ -153,6 +153,15 @@ layout = html.Div([
 
             html.Div(
                 children=[
+                    html.Img(src="/assets/KG.png", style=IMG_STYLE),
+                    html.A("I) CLEETS EV Adoption Knowledge Graph Visualisations", href="https://naeima.github.io/CLEETS-Knowledge-Graph-Visualisation/entity-explorer.html", target = "_blank", style=TITLE_STYLE),
+                    html.P("Visualisations that show which dataset contributes which part of the graph, and how those parts meet in the ontology", style=TEXT_STYLE)
+                ],
+                style={**CARD_STYLE_BASE, "backgroundColor": "#eafbf9"}
+            ),
+         
+            html.Div(
+                children=[
                     html.Img(src="/assets/team.png", style=IMG_STYLE),
                     html.A("CLEETS-SMART Data Science Group", href="https://cleets-global-center.org/", target="_blank", style=TITLE_STYLE)
                 ],
